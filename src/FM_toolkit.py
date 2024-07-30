@@ -7,7 +7,7 @@
 #The code is called by using python, i.e.: python M3-LOLA.py in-radiance.tif in-hillshade.tif outfile
 
 import sys
-sys.path.append('LunarReg/src')
+# sys.path.append('LunarReg/src')
 from os import listdir
 
 import numpy as np
@@ -15,9 +15,7 @@ import cv2 as cv
 import matplotlib.pyplot as plt
 from matplotlib.patches import ConnectionPatch
 
-from lunarreg import IterativeFBM
-from lunarreg.detectors import SIFTDetector
-from lunarreg.matchers import BFMatcher
+from LunarReg import IterativeFBM, SIFTDetector, BFMatcher
 
 #This function records a CSV file with match coordinates and saves a PNG file of the image-to-image plot
 def record_plot(
