@@ -34,21 +34,51 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                               minlat,
                               maxlon,
                               maxlat),
-                outputBoundsSRS='+proj=longlat +a=1737400 +b=1737400 +no_defs'
+                outputBoundsSRS=f'+proj=longlat +a=1737400 +b=1737400 +no_defs'
             ))
 
 	#Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
-    gdal.Warp(f'{workdir}/topo_sinu.tif',f'{workdir}/topo_clip.tif',
+    gdal.Warp(f'{workdir}/topo_ortho.tif',f'{workdir}/topo_clip.tif',
             options=gdal.WarpOptions(
                 format='GTiff',
-                dstSRS=f'+proj=sinu +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+                dstSRS=f'+proj=ortho +lat_0={clat} +lon_0={clon} +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
+                #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
             ))
+    
+    #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
+    gdal.Warp(f'{workdir}/topo_stere.tif',f'{workdir}/topo_clip.tif',
+            options=gdal.WarpOptions(
+                format='GTiff',
+                dstSRS=f'+proj=stere +lat_0={clat} +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
+                #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+            ))
+    
+
+    #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
+    # gdal.Warp(f'{workdir}/topo_clip.tif',inlola,
+    #         options=gdal.WarpOptions(
+    #             format='GTiff',
+    #             dstSRS=f'+proj=ortho +lat_0={clat} +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
+    #             #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+    #         ))
+    
+    # #Clip the global topography to the bounding box. The LOLA DEM is 60 m/px and does not need to be resampled for this procedure. Only clip.
+    # gdal.Warp(f'{workdir}/topo_sinu.tif', f'{workdir}/topo_clip.tif',
+    #         options = gdal.WarpOptions(
+    #             format='GTiff',
+    #             outputBounds=(minlon,
+    #                           minlat,
+    #                           maxlon,
+    #                           maxlat),
+    #             outputBoundsSRS=f'+proj=longlat +a=1737400 +b=1737400 +no_defs'
+    #         ))
 
     def makeHSH(alt, az, clon, clat):
         hshfn = f'hillshade_{clon:03.0f}_{clat:03.0f}_{alt:03.0f}_{az:03.0f}'
+        reffile = f"{workdir}/topo_ortho.tif" if clat < 45 else f"{workdir}/topo_stere.tif"
         gdal.DEMProcessing(
             f"{outdir}/{hshfn}.tif", 
-            f"{workdir}/topo_sinu.tif", 
+            reffile,#f"{workdir}/topo_sinu.tif", 
             "hillshade",
             options=gdal.DEMProcessingOptions(
                 format='GTiff',

@@ -195,21 +195,36 @@ class M3:
         # Returns output file
         return outfn
     
+    def get_RDN_8bit_crop(self, bands, w_x, w_y=None, outdir=None, outfn=None):
+        if w_y is None:
+            w_x = w_y
+        rdn_8bit_orig = self.get_RDN_8bit(bands, outdir=outdir, outfn='8bitorig.tif')
+        if outfn is None:
+            outfn = f'{self.m3id}_RDN_average_byte.tif'
+        if outdir is not None:
+            outfn = outdir + '/' + outfn
+        
+        orig = np.array(Image.open(rdn_8bit_orig))
+        center = np.array(orig.shape)//2
+        
+        pix = [min(w_y//self.resolution, orig.shape[0])//2,
+               min(w_x//self.resolution, orig.shape[1])//2]
+        newimg = orig[center[0]-pix[0]:center[0]+pix[0],
+                      center[1]-pix[1]:center[1]+pix[1]]
+        
+        Image.fromarray(newimg).save(outfn)
+        os.remove(rdn_8bit_orig)
+        return outfn
+
     def get_RDN_8bit_square(self, bands, outdir=None, outfn=None):
         rdn_8bit_orig = self.get_RDN_8bit(bands, outdir=outdir, outfn='8bitorig.tif')
         if outfn is None:
             outfn = f'{self.m3id}_RDN_average_byte.tif'
         if outdir is not None:
             outfn = outdir + '/' + outfn
-
         orig = np.array(Image.open(rdn_8bit_orig))
-
         mindim = min(orig.shape)
-        center = np.array(orig.shape)//2
-        newimg = orig[center[0]-mindim//2:center[0]+mindim//2,
-                      center[1]-mindim//2:center[1]+mindim//2]
-        
-        imagetosave = Image.fromarray(newimg)
-        imagetosave.save(outfn)
-
         os.remove(rdn_8bit_orig)
+
+        return self.get_RDN_8bit_crop(bands, w_x=mindim, outdir=outdir, outfn=outfn)
+        

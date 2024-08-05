@@ -21,15 +21,19 @@
 # June 2024
 
 
-import os, sys, shutil
-from PIL import Image
+import os, sys, shutil, traceback
+
 from osgeo import gdal, osr, gdalconst
 from osgeo_utils import gdal_calc
+
 import numpy as np
 import pandas as pd
-from FM_toolkit import *
+from PIL import Image
+
+from LunarReg import match_images
 from M3 import M3
 from ImageReg import IterativeMatcher
+
 
 FM_OBJ = IterativeMatcher()
 
@@ -64,9 +68,14 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     #Make temporary dir for match image
     os.mkdir(f"{workdir}/{m3id}")
 
+    #Define files for RDN, hillshade, match output
+    inrdn_fm = f'{workdir}/{m3id}_RDN_average_byte.tif'
+    inshd_fm = f'{workdir}/{m3id}_hillshade_az{az:0.2f}_inc{inc:0.2f}.tif'
+    out_fm = f'{workdir}/{m3id}/{m3id}_az{az:0.2f}_inc{inc:0.2f}'
+
     #Create a hillshade map from the topography
     gdal.DEMProcessing(
-        f"{workdir}/{m3id}_hillshade_az{az:0.2f}_inc{inc:0.2f}.tif", 
+        inshd_fm, 
         f"{workdir}/{m3id}_topo_sinu.tif", 
         "hillshade",
         options=gdal.DEMProcessingOptions(
@@ -76,30 +85,27 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
             altitude=alt
         ))
     
-    #Define files for RDN, hillshade, match output
-    inrdn_fm = f'{workdir}/{m3id}_RDN_average_byte.tif'
-    inshd_fm = f'{workdir}/{m3id}_hillshade_az{az:0.2f}_inc{inc:0.2f}.tif'
-    out_fm = f'{workdir}/{m3id}/{m3id}_az{az:0.2f}_inc{inc:0.2f}'
-
     A = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
     B = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
     A = cv.resize(A, B.shape[::-1])
+    success = False
     #Run image match
     try:
-        FM_OBJ.match_and_plot(A, B, ofn=out_fm)
-        #match_images(inrdn_fm, inshd_fm, out_fm)
+        success = FM_OBJ.match_and_plot(f'{out_fm}_match.tif', A, B)
+        # match_images(inrdn_fm, inshd_fm, out_fm)
     except Exception as e:
         print(e)
+        print(traceback.format_exc())
         print("MATCH FAILED")
         shutil.rmtree(f"{workdir}/{m3id}")
-        return False, None, None
+        return False, inshd_fm, None
 
     #Return True if process worked, else remove the temp dir and return False
-    if os.path.isfile(f"{out_fm}.png"):
-        return True, inshd_fm, f'{out_fm}.png'
+    if success or os.path.isfile(f"{out_fm}_match.tif"):
+        return True, inshd_fm, f'{out_fm}_match.tif'
     else:
         shutil.rmtree(f"{workdir}/{m3id}")
-        return False, None, None
+        return False, inshd_fm, None
     
 
 def run_match(m3id):
@@ -166,8 +172,8 @@ def run_match(m3id):
     # Get center x y in meter space
     # Set the bounding box. Add a kilometer on all sides for margin 
     # (may need more if pointing uncertainty is very high)
-    M3_OBJ.set_bounding_box(1000)
-    #M3_OBJ.set_bounding_box_center(80000)
+    # M3_OBJ.set_bounding_box(1000)
+    M3_OBJ.set_bounding_box_center(77000, 135000)
 
     infodict['P_X']         =   M3_OBJ.px
     infodict['P_X_MIN']     =   M3_OBJ.xmin
@@ -185,12 +191,16 @@ def run_match(m3id):
     infodict['BND_LON_MAX']=   M3_OBJ.bound_maxlon
 
     # Get the radiance image from the M3 data, as an 8bit raster image.
-    rdn_image_fn = M3_OBJ.get_RDN_8bit(bands=np.arange(*band_bnds),
-                                       outdir=workdir,
-                                       outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
+    # rdn_image_fn = M3_OBJ.get_RDN_8bit(bands=np.arange(*band_bnds),
+    #                                    outdir=workdir,
+    #                                    outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
     # rdn_image_fn = M3_OBJ.get_RDN_8bit_square(bands=np.arange(*band_bnds),
     #                                    outdir=workdir,
     #                                    outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
+    rdn_image_fn = M3_OBJ.get_RDN_8bit_crop(bands=np.arange(*band_bnds),
+                                       w_x=60800, w_y=74600,
+                                       outdir=workdir,
+                                       outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
     
     #Clip the global topography to the bounding box. The LOLA DEM is 60 m/px and does not need to be resampled for this procedure. Only clip.
     gdal.Warp(f'{workdir}/{m3id}_topo.tif', inlola,
@@ -212,6 +222,7 @@ def run_match(m3id):
     
     # Check if a match was successful
     matched, hsh_fn, match_fn = checkFM(M3_OBJ, workdir)
+    first_hshfn = hsh_fn
     infodict['FIRST_TRY']=matched
     if not matched:
         # Retry matches for azm=[azmmean-60, azmmean+60] and 
@@ -237,8 +248,13 @@ def run_match(m3id):
         shutil.move(f"{workdir}/{m3id}", f"Results/Worked/{m3id}")
         shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Worked/{m3id}/{m3id}_RDN_average_byte.tif")
         shutil.move(hsh_fn, f"Results/Worked/{m3id}/{m3id}_hillshade_az{infodict['AZM_MATCH']:0.2f}_inc{infodict['INC_MATCH']:0.2f}.tif")
+        if hsh_fn != first_hshfn:
+            shutil.move(first_hshfn, f"Results/Worked/{m3id}/{first_hshfn.split('/')[-1]}")
+    
     else:
-        shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Failed/{m3id}_RDN_average_byte.tif")
+        os.mkdir(f"Results/Failed/{m3id}")
+        shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Failed/{m3id}/{m3id}_RDN_average_byte.tif")
+        shutil.move(first_hshfn, f"Results/Failed/{m3id}/{first_hshfn.split('/')[-1]}")
     infodict['WORKED'] = matched
     shutil.rmtree(workdir)
     return infodict
