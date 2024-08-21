@@ -190,7 +190,7 @@ class IterativeMatcher:
         for k in range(n_iters):
             # Take the first step of iterative FBM. For this step, the current homography will be used to find 
             # new matches. From here, we have this iteration's new keypoints and descriptors.
-            H_cur, kp1, des1, new_matches, s = self.step(im1, kp2, des2, H_cur, k, kp_f, des_f, matches_f)
+            H_cur, kp1, des1, new_matches = self.step(im1, kp2, des2, H_cur, k, kp_f, des_f, matches_f)
             if H_cur is None:
                 break
 
