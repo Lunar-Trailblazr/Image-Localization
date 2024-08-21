@@ -29,6 +29,7 @@ from osgeo_utils import gdal_calc
 import numpy as np
 import pandas as pd
 from PIL import Image
+import cv2 as cv
 
 from LunarReg import match_images
 from M3 import M3
@@ -91,7 +92,8 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     success = False
     #Run image match
     try:
-        success = FM_OBJ.match_and_plot(f'{out_fm}_match.tif', A, B)
+        H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot(f'{out_fm}_match.tif', A, B, 
+                                                                   colormatch=True, cmatch_fn=f'{out_fm}_colormatched.tif')
         # match_images(inrdn_fm, inshd_fm, out_fm)
     except Exception as e:
         print(e)
@@ -102,7 +104,7 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
 
     #Return True if process worked, else remove the temp dir and return False
     if success or os.path.isfile(f"{out_fm}_match.tif"):
-        return True, inshd_fm, f'{out_fm}_match.tif'
+        return True, inshd_fm, [f'{out_fm}_match.tif', f'{out_fm}_colormatched.tif']
     else:
         shutil.rmtree(f"{workdir}/{m3id}")
         return False, inshd_fm, None
@@ -221,7 +223,7 @@ def run_match(m3id):
             ))
     
     # Check if a match was successful
-    matched, hsh_fn, match_fn = checkFM(M3_OBJ, workdir)
+    matched, hsh_fn, saved_fns = checkFM(M3_OBJ, workdir)
     first_hshfn = hsh_fn
     infodict['FIRST_TRY']=matched
     if not matched:
@@ -232,7 +234,7 @@ def run_match(m3id):
                                np.arange( 10, 90, 10))
         coords = np.vstack((inc.flatten(), azm.flatten())).T
         for k in range(len(coords)):
-            matched, hsh_fn, match_fn = checkFM(M3_OBJ, workdir, inc=coords[k][0], azm=coords[k][1])
+            matched, hsh_fn, saved_fns = checkFM(M3_OBJ, workdir, inc=coords[k][0], azm=coords[k][1])
             if matched:
                 infodict['INC_MATCH'] = coords[k][0]
                 infodict['AZM_MATCH'] = coords[k][1]
@@ -244,7 +246,6 @@ def run_match(m3id):
     # If there has been any match, move the matching directory to Results/Worked, else 
     # write a file to Results/Failed indicating no match was found.
     if matched:
-        # shutil.copy(match_fn,f'Results/Matches/{m3id}_match.png')
         shutil.move(f"{workdir}/{m3id}", f"Results/Worked/{m3id}")
         shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Worked/{m3id}/{m3id}_RDN_average_byte.tif")
         shutil.move(hsh_fn, f"Results/Worked/{m3id}/{m3id}_hillshade_az{infodict['AZM_MATCH']:0.2f}_inc{infodict['INC_MATCH']:0.2f}.tif")
