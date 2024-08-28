@@ -5,6 +5,7 @@
 
 import cv2 as cv
 import numpy as np
+from scipy.interpolate import CubicSpline
 import warnings
 
 #################################################
@@ -92,16 +93,17 @@ class FeatureMatcher:
 ############### FEATURE MATCH ###################
 #################################################
 
-
-def colorTransfer(source, dest):
-    # Transfers the tone of source to dest
-    s_mean, s_std = cv.meanStdDev(source, mask=cv.inRange(source, 0, 254))
-    d_mean, d_std = cv.meanStdDev(dest, mask=cv.inRange(dest, 0, 254))
-
-    s_mean, s_std = np.hstack(s_mean)[0], np.hstack(s_std)[0]
-    d_mean, d_std = np.hstack(d_mean)[0], np.hstack(d_std)[0]
-
-    return np.clip(((dest-d_mean)*(s_std/d_std))+s_mean, 0, 255).astype(np.uint8)
+def colortransfer(src, dst):
+    try:
+        pcts = np.arange(0,101,10)
+        yfit = [np.percentile(dst, k) for k in pcts]
+        xfit = [np.percentile(src, k) for k in pcts]
+        spline = CubicSpline(xfit, yfit)
+        src_remap = np.clip(cv.LUT(src, spline(np.arange(256))),0,255)
+        return src_remap.astype(np.uint8), dst
+    except:
+        warnings.warn('COLORMATCH FAILED')
+        return cv.equalizeHist(src), cv.equalizeHist(dst)
 
 class IterativeMatcher:
     '''
@@ -162,7 +164,7 @@ class IterativeMatcher:
         # Return the new homography, keypoints, descriptors, and matches
         return M_out, list(kp1), list(des1), list(new_matches)
 
-    def iterative_match(self, im1, im2, colormatch=True, cmatch_fn=None, n_iters=10):
+    def iterative_match(self, im1, im2, colormatch=True, cmatch_fns=None, n_iters=10):
         '''
         Performs iterative matching between two images
         '''
@@ -170,9 +172,10 @@ class IterativeMatcher:
         # improve the match quality. On by default. If a filename is provided, will also
         # save the color matched image to disk.
         if colormatch:
-            im1 = colorTransfer(im2, im1)
-            if cmatch_fn is not None:
-                cv.imwrite(cmatch_fn, im1)
+            im2, im1 = colortransfer(im2, im1)
+            if cmatch_fns is not None:
+                cv.imwrite(cmatch_fns[0], im1)
+                cv.imwrite(cmatch_fns[1], im2)
         
         # Detect keypoints for the second image. Every iteration will only
         # warp the input first image, so we ensure consistency by precomputing
@@ -223,10 +226,18 @@ class IterativeMatcher:
         assert len(matches_f) > 0, "NO MATCHES FOUND"
         return H_f, kp_f, kp2, matches_f
     
-    def match_and_plot(self, outfn, im1, im2, colormatch=True, cmatch_fn=None, n_iters=10):
-        (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, colormatch=colormatch, cmatch_fn=cmatch_fn, n_iters=n_iters)
+    def match_and_plot(self, outfns, im1, im2, colormatch=True, cmatch_fns=None, n_iters=10):
+        (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, colormatch=colormatch, cmatch_fns=cmatch_fns, n_iters=n_iters)
+        
         if colormatch:
-            im1 = colorTransfer(im2, im1)
-        img3 = cv.drawMatches(im1,kp_f,im2,kp2,matches_f,None,flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-        cv.imwrite(outfn, img3)
-        return H_f, kp_f, kp2, matches_f, outfn
+            im2, im1 = colortransfer(im1,im2)
+
+        img3 = np.zeros(im1.shape[0], dtype=np.uint8)
+        img3 = cv.warpPerspective(im1, H_f, im1.shape[::-1])//2
+        img3 += im2//2
+
+        # img3[:,:,1] = (im2/np.max(im2))**2 * np.max(im2)
+        img4 = cv.drawMatches(im1,kp_f,im2,kp2,matches_f,None,flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        cv.imwrite(outfns[0], img3)
+        cv.imwrite(outfns[1], img4)
+        return H_f, kp_f, kp2, matches_f, outfns

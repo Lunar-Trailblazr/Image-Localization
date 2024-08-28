@@ -31,7 +31,6 @@ import pandas as pd
 from PIL import Image
 import cv2 as cv
 
-from LunarReg import match_images
 from M3 import M3
 from ImageReg import IterativeMatcher
 
@@ -58,7 +57,7 @@ DF_COLS = ['M3ID', 'WORKED',
            'P_Y', 'P_Y_MIN', 'P_Y_MAX',
            'BND_LON', 'BND_LON_MIN', 'BND_LON_MAX',  
            'BND_LAT', 'BND_LAT_MIN', 'BND_LAT_MAX',
-           'INC', 'AZM', 'INC_MATCH', 'AZM_MATCH']
+           'INC', 'AZM', 'INC_MATCH', 'AZM_MATCH', 'N_MATCHES']
 
 def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     m3id    = M3_OBJ.m3id
@@ -92,22 +91,24 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     success = False
     #Run image match
     try:
-        H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot(f'{out_fm}_match.tif', A, B, 
-                                                                   colormatch=True, cmatch_fn=f'{out_fm}_colormatched.tif')
+        H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', f'{out_fm}_match2.tif'], A, B, 
+                                                                   colormatch=True, 
+                                                                   cmatch_fns=[f'{workdir}/{m3id}/{m3id}_RDN_NORM.tif',
+                                                                               f'{out_fm}_NORM.tif'])
         # match_images(inrdn_fm, inshd_fm, out_fm)
     except Exception as e:
         print(e)
-        print(traceback.format_exc())
+        #print(traceback.format_exc())
         print("MATCH FAILED")
         shutil.rmtree(f"{workdir}/{m3id}")
-        return False, inshd_fm, None
+        return False, inshd_fm, None, 0
 
     #Return True if process worked, else remove the temp dir and return False
     if success or os.path.isfile(f"{out_fm}_match.tif"):
-        return True, inshd_fm, [f'{out_fm}_match.tif', f'{out_fm}_colormatched.tif']
+        return True, inshd_fm, [f'{out_fm}_match.tif', f'{out_fm}_colormatched.tif'], len(matches_f)
     else:
         shutil.rmtree(f"{workdir}/{m3id}")
-        return False, inshd_fm, None
+        return False, inshd_fm, None, len(matches_f)
     
 
 def run_match(m3id):
@@ -223,7 +224,7 @@ def run_match(m3id):
             ))
     
     # Check if a match was successful
-    matched, hsh_fn, saved_fns = checkFM(M3_OBJ, workdir)
+    matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, workdir)
     first_hshfn = hsh_fn
     infodict['FIRST_TRY']=matched
     if not matched:
@@ -234,25 +235,28 @@ def run_match(m3id):
                                np.arange( 10, 90, 10))
         coords = np.vstack((inc.flatten(), azm.flatten())).T
         for k in range(len(coords)):
-            matched, hsh_fn, saved_fns = checkFM(M3_OBJ, workdir, inc=coords[k][0], azm=coords[k][1])
+            matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, workdir, inc=coords[k][0], azm=coords[k][1])
             if matched:
                 infodict['INC_MATCH'] = coords[k][0]
                 infodict['AZM_MATCH'] = coords[k][1]
+                infodict['N_MATCHES'] = n_matches
                 break
     else:
         infodict['INC_MATCH'] = infodict['INC']
         infodict['AZM_MATCH'] = infodict['AZM']
+        infodict['N_MATCHES'] = n_matches
     
     # If there has been any match, move the matching directory to Results/Worked, else 
     # write a file to Results/Failed indicating no match was found.
     if matched:
+        shutil.copy(saved_fns[0], f"Results/Matches/{m3id}_match.tif")
         shutil.move(f"{workdir}/{m3id}", f"Results/Worked/{m3id}")
         shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Worked/{m3id}/{m3id}_RDN_average_byte.tif")
         shutil.move(hsh_fn, f"Results/Worked/{m3id}/{m3id}_hillshade_az{infodict['AZM_MATCH']:0.2f}_inc{infodict['INC_MATCH']:0.2f}.tif")
         if hsh_fn != first_hshfn:
             shutil.move(first_hshfn, f"Results/Worked/{m3id}/{first_hshfn.split('/')[-1]}")
-    
     else:
+        infodict['N_MATCHES'] = 0
         os.mkdir(f"Results/Failed/{m3id}")
         shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Failed/{m3id}/{m3id}_RDN_average_byte.tif")
         shutil.move(first_hshfn, f"Results/Failed/{m3id}/{first_hshfn.split('/')[-1]}")
