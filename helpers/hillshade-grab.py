@@ -3,8 +3,9 @@
 # Provides infrastructure for testing hillshade generation.
 
 import os, shutil
-from osgeo import gdal
+from osgeo import gdal, gdalconst
 import cv2 as cv
+import numpy as np
 
 def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
     clon = (minlon+maxlon)/2
@@ -84,8 +85,25 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                 format='GTiff',
                 alg='ZevenbergenThorne',
                 azimuth=az,
-                altitude=alt
+                altitude=90-alt,
+                zFactor=4
             ))
+        # gdal.Translate(
+        #     f"{outdir}/{hshfn}_rmp.tif", 
+        #     f"{outdir}/{hshfn}.tif", 
+        #     options=gdal.TranslateOptions(
+        #         format='GTiff',
+        #         outputType=gdalconst.GDT_Byte,
+        #         scaleParams=[]
+        # ))
+        
+        # im = cv.imread(f"{outdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH)
+        # imclip = np.clip(im, np.percentile(im,1), np.percentile(im,99))
+        # cv.imwrite(f"{outdir}/{hshfn}_REMAP1.tif", imclip.astype(np.uint8))
+        # imclip = imclip - np.mean(imclip)
+        # imclip = (imclip/np.ptp(imclip))*255 + 128
+        # imclip = np.clip(imclip,0,255)
+        # cv.imwrite(f"{outdir}/{hshfn}_REMAP.tif", imclip.astype(np.uint8))
         # cv.imwrite(f"{outdir}/{hshfn}.tif", 
         #            cv.imread(f"{workdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH))
     
@@ -100,19 +118,19 @@ if __name__ == "__main__":
     # get_hillshade(6.07941, 81.60264,
     #               11.72785, 87.45002, configs)
     
-    configs = [(45, 315)]
+    configs = [(45, 315), (20, 315), (70, 315)]
     latbnds = [(-5,5),(15,25),(35,60), (50,80), (80,89.9)]
     out_fn = 'hshtestdir'
-    for k in latbnds:
-        get_hillshade(k[0], 80,
-                      k[1], 90, configs, outdir=out_fn)
+    # for k in latbnds:
+    #     get_hillshade(k[0], 80,
+    #                   k[1], 90, configs, outdir=out_fn)
     get_hillshade(-79.93014228527048, 344.57656629590826-360,
                   -65.92539924277551, 352.6450695389247-360, configs, outdir=out_fn)
     # 348.6108179174165,344.57656629590826,352.6450695389247,
     # -72.927770764023,-79.93014228527048,-65.92539924277551,
 
-    get_hillshade(-81.7889287904793,-13.756994328720385,
-                  -64.06661273756666,-9.021369836446231, [(44,315)], outdir=out_fn)
+    # get_hillshade(-81.7889287904793,-13.756994328720385,
+    #               -64.06661273756666,-9.021369836446231, [(44,315)], outdir=out_fn)
     
     # -11.389182082583307,-13.756994328720385,-9.021369836446231,
     # -72.92777076402298,-81.7889287904793,-64.06661273756666,

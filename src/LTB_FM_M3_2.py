@@ -82,23 +82,29 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
             format='GTiff',
             alg='ZevenbergenThorne',
             azimuth=az,
-            altitude=alt
+            altitude=alt,
+            zFactor=2
         ))
     
     A = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
     B = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
-    A = cv.resize(A, B.shape[::-1])
+    # A = cv.resize(A, B.shape[::-1])
     success = False
     #Run image match
     try:
-        H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', f'{out_fm}_match2.tif'], A, B, 
-                                                                   colormatch=True, 
-                                                                   cmatch_fns=[f'{workdir}/{m3id}/{m3id}_RDN_NORM.tif',
-                                                                               f'{out_fm}_NORM.tif'])
+        H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', 
+                                                                    f'{out_fm}_match2.tif', 
+                                                                    f'{workdir}/{m3id}/{m3id}_RDN_WARP.tif',
+                                                                    f'{workdir}/{m3id}/{m3id}_RDN_KPS.tif',
+                                                                    f'{out_fm}_KPS.tif'], 
+                                                                    A, B, 
+                                                                    colormatch=True, 
+                                                                    cmatch_fns=[f'{workdir}/{m3id}/{m3id}_RDN_NORM.tif',
+                                                                                f'{out_fm}_NORM.tif',])
         # match_images(inrdn_fm, inshd_fm, out_fm)
     except Exception as e:
+        print(traceback.format_exc())
         print(e)
-        #print(traceback.format_exc())
         print("MATCH FAILED")
         shutil.rmtree(f"{workdir}/{m3id}")
         return False, inshd_fm, None, 0

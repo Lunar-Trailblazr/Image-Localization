@@ -71,6 +71,8 @@ class FeatureMatcher:
     def match_image_to_kp(self, im1, kp2, des2, M_in=np.eye(3), k=2, r=0.65):
         im1prime = cv.warpPerspective(im1, M_in, im1.shape[::-1])
         kp1, des1 = self.detector.detectAndCompute(im1prime, None)
+        assert len(kp1) > 0, f"NO KEYPOINTS GENERATED!"
+        assert des1 is not None, f"NO DESCRIPTORS GENERATED!"
         matches = self.match(kp1, des1, kp2, des2, k=k, r=r)
         assert len(matches) >= 4, f"UNDER 4 MATCHES TO CALCULATE HOMOGRAPHY (FOUND {len(matches)}) - MATCH FAILED"
 
@@ -93,7 +95,16 @@ class FeatureMatcher:
 ############### FEATURE MATCH ###################
 #################################################
 
+
 def colortransfer(src, dst):
+    # s_mean, s_std = cv.meanStdDev(src, mask=cv.inRange(src, 1, 254))
+    # d_mean, d_std = cv.meanStdDev(dst, mask=cv.inRange(dst, 1, 254))
+
+    # s_mean, s_std = np.hstack(s_mean)[0], np.hstack(s_std)[0]
+    # d_mean, d_std = np.hstack(d_mean)[0], np.hstack(d_std)[0]
+
+    # dst_clip = np.clip((dst-d_mean)*(s_std/d_std) + s_mean, 0, 255).astype(np.uint8)
+    # return src, dst_clip
     try:
         pcts = np.arange(0,101,10)
         yfit = [np.percentile(dst, k) for k in pcts]
@@ -128,7 +139,7 @@ class IterativeMatcher:
             (kp1, des1, matches, M_out) = self.fmobj.match_image_to_kp(im1, kp2, des2, M_in=M_in)
         except Exception as e:
             if k==0: raise e
-            return None, None, None, None
+            return M_in, [], [], []
         
         # Create list of the new matches, with query indexes shifted based on
         # the currently matched keypoints. As a note, each keypoint contains
@@ -172,7 +183,7 @@ class IterativeMatcher:
         # improve the match quality. On by default. If a filename is provided, will also
         # save the color matched image to disk.
         if colormatch:
-            im2, im1 = colortransfer(im2, im1)
+            im1, im2 = colortransfer(im1, im2)
             if cmatch_fns is not None:
                 cv.imwrite(cmatch_fns[0], im1)
                 cv.imwrite(cmatch_fns[1], im2)
@@ -230,14 +241,20 @@ class IterativeMatcher:
         (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, colormatch=colormatch, cmatch_fns=cmatch_fns, n_iters=n_iters)
         
         if colormatch:
-            im2, im1 = colortransfer(im1,im2)
+            im1, im2 = colortransfer(im1,im2)
 
         img3 = np.zeros(im1.shape[0], dtype=np.uint8)
-        img3 = cv.warpPerspective(im1, H_f, im1.shape[::-1])//2
+        img3 = cv.warpPerspective(im1, H_f, im2.shape[::-1])//2
+        cv.imwrite(outfns[2], im3)
         img3 += im2//2
 
         # img3[:,:,1] = (im2/np.max(im2))**2 * np.max(im2)
         img4 = cv.drawMatches(im1,kp_f,im2,kp2,matches_f,None,flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        img5 = cv.drawKeypoints(im1, kp_f, im1, cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
+        img6 = cv.drawKeypoints(im2, kp2, im2, cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
         cv.imwrite(outfns[0], img3)
         cv.imwrite(outfns[1], img4)
+        cv.imwrite(outfns[3], img5)
+        cv.imwrite(outfns[4], img6)
+
         return H_f, kp_f, kp2, matches_f, outfns
