@@ -83,12 +83,12 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
             alg='ZevenbergenThorne',
             azimuth=az,
             altitude=alt,
-            zFactor=2
+            #zFactor=2
         ))
     
     A = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
     B = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
-    # A = cv.resize(A, B.shape[::-1])
+    A = cv.resize(A, B.shape[::-1])
     success = False
     #Run image match
     try:
@@ -134,10 +134,7 @@ def run_match(m3id):
     if work:
         shutil.rmtree(f'Results/Worked/{m3id}')
     elif fail:
-        if f'{m3id}.txt' in os.listdir('Results/Failed'):
-            os.remove(f'Results/Failed/{m3id}.txt')
-        else:
-            os.remove(f'Results/Failed/{m3id}_RDN_average_byte.tif')
+        shutil.rmtree(f'Results/Failed/{m3id}')
     
     #Create a directory to run all of the processes/make files in.
     workdir=f'{m3id}_work'

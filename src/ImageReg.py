@@ -7,6 +7,7 @@ import cv2 as cv
 import numpy as np
 from scipy.interpolate import CubicSpline
 import warnings
+from skimage import exposure
 
 #################################################
 ############### SIFT DETECTOR ###################
@@ -38,16 +39,16 @@ class FeatureMatcher:
         self.detector = detector
         self.matcher = matcher
 
-    def knn_ratio(self, des1, des2, k=2, r=0.65):
+    def knn_ratio(self, des1, des2, k=2, r=0.8):
         '''
         Runs KNN using the matcher on the two descriptor groups, then filters to those
-        with a distance metric below `r` (default value 0.65)
+        with a distance metric below `r` (default value 0.8)
         '''
         matches = self.matcher.knnMatch(des1, des2, k=k)
         thresh = filter(lambda match: match[0].distance <= r*match[1].distance, matches)
         return list(thresh)
 
-    def match(self, kp1, des1, kp2, des2, k=2, r=0.65):
+    def match(self, kp1, des1, kp2, des2, k=2, r=0.8):
         '''
         Provides the keypoints and match information for two passed keypoint/descriptor pairs, 
         using the saved detector and matcher objects
@@ -68,7 +69,7 @@ class FeatureMatcher:
         # keypoints/descriptor matches.
         return self.knn_ratio(des1, des2, k=k, r=r)
     
-    def match_image_to_kp(self, im1, kp2, des2, M_in=np.eye(3), k=2, r=0.65):
+    def match_image_to_kp(self, im1, kp2, des2, M_in=np.eye(3), k=2, r=0.8):
         im1prime = cv.warpPerspective(im1, M_in, im1.shape[::-1])
         kp1, des1 = self.detector.detectAndCompute(im1prime, None)
         assert len(kp1) > 0, f"NO KEYPOINTS GENERATED!"
@@ -86,7 +87,7 @@ class FeatureMatcher:
 
         return kp1,des1,matches,H
     
-    def match_image_to_image(self, im1, im2, M_in=np.eye(3), k=2, r=0.65):
+    def match_image_to_image(self, im1, im2, M_in=np.eye(3), k=2, r=0.8):
         kp2, des2 = self.detector.detectAndCompute(im2)
         return self.match_image_to_kp(im1, kp2, des2, M_in=M_in, k=k, r=r)
 
@@ -105,16 +106,20 @@ def colortransfer(src, dst):
 
     # dst_clip = np.clip((dst-d_mean)*(s_std/d_std) + s_mean, 0, 255).astype(np.uint8)
     # return src, dst_clip
-    try:
-        pcts = np.arange(0,101,10)
-        yfit = [np.percentile(dst, k) for k in pcts]
-        xfit = [np.percentile(src, k) for k in pcts]
-        spline = CubicSpline(xfit, yfit)
-        src_remap = np.clip(cv.LUT(src, spline(np.arange(256))),0,255)
-        return src_remap.astype(np.uint8), dst
-    except:
-        warnings.warn('COLORMATCH FAILED')
-        return cv.equalizeHist(src), cv.equalizeHist(dst)
+    # try:
+    #     pcts = np.arange(0,101,10)
+    #     yfit = [np.percentile(dst, k) for k in pcts]
+    #     xfit = [np.percentile(src, k) for k in pcts]
+    #     spline = CubicSpline(xfit, yfit)
+    #     src_remap = np.clip(cv.LUT(src, spline(np.arange(256))),0,255)
+    #     return src_remap.astype(np.uint8), dst
+    # except:
+    #     warnings.warn('COLORMATCH FAILED')
+    #     return cv.equalizeHist(src), cv.equalizeHist(dst)
+    srcremap = np.array(exposure.rescale_intensity(src, in_range=(np.percentile(src,1), np.percentile(src,99)))).astype(np.uint8)
+    dstremap = np.array(exposure.rescale_intensity(dst, in_range=(np.percentile(dst,1), np.percentile(dst,99)))).astype(np.uint8)
+    dstremap = np.array(exposure.match_histograms(dstremap, srcremap)).astype(np.uint8)
+    return srcremap, dstremap
 
 class IterativeMatcher:
     '''
@@ -243,9 +248,9 @@ class IterativeMatcher:
         if colormatch:
             im1, im2 = colortransfer(im1,im2)
 
-        img3 = np.zeros(im1.shape[0], dtype=np.uint8)
+        # img3 = np.zeros(im2.shape[0], dtype=np.uint8)
         img3 = cv.warpPerspective(im1, H_f, im2.shape[::-1])//2
-        cv.imwrite(outfns[2], im3)
+        cv.imwrite(outfns[2], img3)
         img3 += im2//2
 
         # img3[:,:,1] = (im2/np.max(im2))**2 * np.max(im2)
