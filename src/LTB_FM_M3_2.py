@@ -37,19 +37,26 @@ from ImageReg import IterativeMatcher
 
 FM_OBJ = IterativeMatcher()
 
-#Input topography file to be used to generate hillshade
+# Input file for topography
 inlola = "Topography/LunarTopography_60mpx.tif"
-#Ground resolution of M3 in m/px.
-#This is required for extraction of LOLA data over a reasonable area of the Moon to generate a hillshade for matching.
+
+# Ground resolution of M3 in m/pix. Used to approximate the size of the
+# M3 image used in matching, guaranteeing a sufficiently large hillshade.
 m3resolution = 200
-#Define starting and ending bands in M3 for averaging.
-#The code averages M3 bands together to increase the quality of the matching product. 
-# Set the start band and end band (in units of band number). Includes first band, excludes last band
+
+# Define the bands used for averaging the M3 radiance data. This includes
+# the first band, excludes the last band. Averaging bands together increases
+# quality of the image product used in matching.
 band_bnds=(71,82)
-#Input directory for radiance data. This is a volume of M3 data that have been clipped to 2677 rows to be more similar to HVM3 data. The middle 2677 rows were extracted for each M3 product.
+
+# Input directory for the radiance data.
+# The currently used data is clipped to 2677 rows. The implementation no longer
+# relies on this feature, but it is noted here for completeness.
 m3dir="Data_M3"
 
-DF_COLS = ['M3ID', 'WORKED', 
+# These are the metrics recorded for each run of the matching script.
+# Each of these metrics are documented later in the script.
+DF_COLS = ['M3ID', 'WORKED',  
            'FIRST_TRY', 'FILE_FOUND',
            'LON', 'LON_MIN', 'LON_MAX',  
            'LAT', 'LAT_MIN', 'LAT_MAX',
@@ -86,24 +93,25 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
             #zFactor=2
         ))
     
-    A = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
-    B = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
-    A = cv.resize(A, B.shape[::-1])
+    # Read in the images
+    RDN = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
+    HSH = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
     success = False
-    #Run image match
+
+    #Run image match, providing the filenames to write output to.
     try:
         H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', 
                                                                     f'{out_fm}_match2.tif', 
                                                                     f'{workdir}/{m3id}/{m3id}_RDN_WARP.tif',
                                                                     f'{workdir}/{m3id}/{m3id}_RDN_KPS.tif',
                                                                     f'{out_fm}_KPS.tif'], 
-                                                                    A, B, 
+                                                                    RDN, HSH, 
                                                                     colormatch=True, 
                                                                     cmatch_fns=[f'{workdir}/{m3id}/{m3id}_RDN_NORM.tif',
                                                                                 f'{out_fm}_NORM.tif',])
-        # match_images(inrdn_fm, inshd_fm, out_fm)
     except Exception as e:
-        print(traceback.format_exc())
+        # Uncomment the following line for debugging exceptions
+        # print(traceback.format_exc())
         print(e)
         print("MATCH FAILED")
         shutil.rmtree(f"{workdir}/{m3id}")
@@ -111,7 +119,8 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
 
     #Return True if process worked, else remove the temp dir and return False
     if success or os.path.isfile(f"{out_fm}_match.tif"):
-        return True, inshd_fm, [f'{out_fm}_match.tif', f'{out_fm}_colormatched.tif'], len(matches_f)
+        return True, inshd_fm, [f'{out_fm}_match.tif', 
+                                f'{out_fm}_colormatched.tif'], len(matches_f)
     else:
         shutil.rmtree(f"{workdir}/{m3id}")
         return False, inshd_fm, None, len(matches_f)
@@ -142,73 +151,75 @@ def run_match(m3id):
         shutil.rmtree(workdir)
     os.mkdir(workdir)
 
-    # Create M3 data object
+    ##################################################
+    ############### M3 DATA OBJECT ###################
+    ##################################################
+
+    # Create M3 data object. This precomputes many of the metrics needed for
+    # creation of a radiance and hillshade image, and allows for the recording
+    # of these metrics.
     try:
         M3_OBJ = M3(m3id=m3id, 
                     m3dir=m3dir, 
                     resolution=m3resolution)
+        infodict['FILE_FOUND']  =   True
     except FileNotFoundError as e:
+        # If there is a filenotfound error, then log that the M3
+        # data could not be accessed and return.
         if os.path.isdir(workdir):
             shutil.rmtree(workdir)
-        f = open(f"Results/Failed/{m3id}.txt", "a")
-        f.write(f"{m3id} NOT FOUND")
-        f.close()
+        os.mkdir(f'Results/Failed/{m3id}')
+        with open(f"Results/Failed/{m3id}/{m3id}.txt", "rw") as f:
+            f.write(f"{m3id} NOT FOUND")
         infodict['FILE_FOUND']  = False
         infodict['WORKED']      = False
         return infodict
+    
+    # Set the bounding box for the hillshade region. To match the expectation
+    # of HVM3, the box is set from the lat/lon center,
+    M3_OBJ.set_bounding_box_center(77000, 135000)
 
-    infodict['FILE_FOUND']  =   True
+    # Get the radiance image from the M3 data, as an 8bit raster image. Set the
+    # aspect ratio of the cropped raster to be as similar as possible to HVM3.
+    rdn_image_fn = M3_OBJ.get_RDN_8bit_crop(bands=np.arange(*band_bnds),
+                                       w_x=60800, w_y=74600,
+                                       outdir=workdir,
+                                       outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
 
-    ###Calculate extent for hillshade. This calculates the center lat/lon from the LOC file for M3.
-    ###For HVM3, the LOC file will not be available at this stage, so center coordinates should be extracted from the filename, or from a lookup table of targets.
-
-    # Get center/boundary lat/lon
+    ####### Populate the data logger
+    
+    # Get center/boundary lat/lon. For HVM3, there will only be a center lat
+    # lon coordinate given, no min or max.
     infodict['LAT']         =   M3_OBJ.clat
     infodict['LAT_MIN']     =   M3_OBJ.minlat
     infodict['LAT_MAX']     =   M3_OBJ.maxlat
     infodict['LON']         =   M3_OBJ.clon
     infodict['LON_MIN']     =   M3_OBJ.minlon
     infodict['LON_MAX']     =   M3_OBJ.maxlon
-
-    #Calculate the mean solar azimuth and solar incidence from the Observation data file
-	#This will not be available for HVM3. Will need predicted values for center of the planned target from MOS/GDS or MdNav
+    # Record the solar azimuth and incidence angles. This will not be available
+    # for HVM3, we will need to use predicted values from MOS/GDS or MdNav
     infodict['INC']         =   M3_OBJ.inc
     infodict['AZM']         =   M3_OBJ.azm
-
-    # Get center x y in meter space
-    # Set the bounding box. Add a kilometer on all sides for margin 
-    # (may need more if pointing uncertainty is very high)
-    # M3_OBJ.set_bounding_box(1000)
-    M3_OBJ.set_bounding_box_center(77000, 135000)
-
+    # Get the bounding box for the hillshade in both meter and lat/lon space
     infodict['P_X']         =   M3_OBJ.px
     infodict['P_X_MIN']     =   M3_OBJ.xmin
     infodict['P_X_MAX']     =   M3_OBJ.xmax
     infodict['P_Y']         =   M3_OBJ.py
     infodict['P_Y_MIN']     =   M3_OBJ.ymin
     infodict['P_Y_MAX']     =   M3_OBJ.ymax
+    infodict['BND_LAT']     =   M3_OBJ.bound_lat
+    infodict['BND_LAT_MIN'] =   M3_OBJ.bound_minlat
+    infodict['BND_LAT_MAX'] =   M3_OBJ.bound_maxlat
+    infodict['BND_LON']     =   M3_OBJ.bound_lon
+    infodict['BND_LON_MIN'] =   M3_OBJ.bound_minlon
+    infodict['BND_LON_MAX'] =   M3_OBJ.bound_maxlon
 
-    #Get x and y in degree space. Parse the lines to define bounding box coordinates.
-    infodict['BND_LAT']    =   M3_OBJ.bound_lat
-    infodict['BND_LAT_MIN']=   M3_OBJ.bound_minlat
-    infodict['BND_LAT_MAX']=   M3_OBJ.bound_maxlat
-    infodict['BND_LON']    =   M3_OBJ.bound_lon
-    infodict['BND_LON_MIN']=   M3_OBJ.bound_minlon
-    infodict['BND_LON_MAX']=   M3_OBJ.bound_maxlon
-
-    # Get the radiance image from the M3 data, as an 8bit raster image.
-    # rdn_image_fn = M3_OBJ.get_RDN_8bit(bands=np.arange(*band_bnds),
-    #                                    outdir=workdir,
-    #                                    outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
-    # rdn_image_fn = M3_OBJ.get_RDN_8bit_square(bands=np.arange(*band_bnds),
-    #                                    outdir=workdir,
-    #                                    outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
-    rdn_image_fn = M3_OBJ.get_RDN_8bit_crop(bands=np.arange(*band_bnds),
-                                       w_x=60800, w_y=74600,
-                                       outdir=workdir,
-                                       outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
+    ######################################################
+    ############### HILLSHADE CREATION ###################
+    ######################################################
     
-    #Clip the global topography to the bounding box. The LOLA DEM is 60 m/px and does not need to be resampled for this procedure. Only clip.
+    
+    #Clip the global LOLA DEM topography to the bounding box.
     gdal.Warp(f'{workdir}/{m3id}_topo.tif', inlola,
             options = gdal.WarpOptions(
                 format='GTiff',
@@ -219,7 +230,7 @@ def run_match(m3id):
                 outputBoundsSRS='+proj=longlat +a=1737400 +b=1737400 +no_defs'
             ))
     
-	#Reproject topography to sinusoidal to increase chances of a match.
+    # Reproject the topography to sinusoidal
     gdal.Warp(f'{workdir}/{m3id}_topo_sinu.tif',f'{workdir}/{m3id}_topo.tif',
             options=gdal.WarpOptions(
                 format='GTiff',

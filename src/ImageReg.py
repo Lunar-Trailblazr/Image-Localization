@@ -69,27 +69,37 @@ class FeatureMatcher:
         # keypoints/descriptor matches.
         return self.knn_ratio(des1, des2, k=k, r=r)
     
-    def match_image_to_kp(self, im1, kp2, des2, M_in=np.eye(3), k=2, r=0.8):
-        im1prime = cv.warpPerspective(im1, M_in, im1.shape[::-1])
+    def match_image_to_kp(self, im1, shape2, kp2, des2, M_in=np.eye(3), k=2, r=0.8):
+        # Warp the input based on the current homography and the shape of the output
+        im1prime = cv.warpPerspective(im1, M_in, shape2[::-1])
+
+        # Detect the keypoints for the warped image, throwing an error if 
+        # there are no keypoints detected.
         kp1, des1 = self.detector.detectAndCompute(im1prime, None)
         assert len(kp1) > 0, f"NO KEYPOINTS GENERATED!"
         assert des1 is not None, f"NO DESCRIPTORS GENERATED!"
+
+        # Attempt to match the keypoints for the first and second images,
+        # throwing an error if there are <4 matches
         matches = self.match(kp1, des1, kp2, des2, k=k, r=r)
         assert len(matches) >= 4, f"UNDER 4 MATCHES TO CALCULATE HOMOGRAPHY (FOUND {len(matches)}) - MATCH FAILED"
 
+        # Compute a homography for the match. If no homography can be
+        # computed with RANSAC, retry with least squares.
         ptsA = np.array([kp1[k[0].queryIdx].pt for k in matches])
         ptsB = np.array([kp2[k[0].trainIdx].pt for k in matches])
-        try:
+        try: # RANSAC
             homography, mask = cv.findHomography(ptsA, ptsB, cv.RANSAC, 3.)
-        except:
+        except: # Least squares
             homography, mask = cv.findHomography(ptsA, ptsB, 0)
-        H = homography.dot(M_in)
 
+        # Combine the output homography with the input and return
+        H = homography.dot(M_in)
         return kp1,des1,matches,H
     
     def match_image_to_image(self, im1, im2, M_in=np.eye(3), k=2, r=0.8):
         kp2, des2 = self.detector.detectAndCompute(im2)
-        return self.match_image_to_kp(im1, kp2, des2, M_in=M_in, k=k, r=r)
+        return self.match_image_to_kp(im1, kp2, im2.shape, des2, M_in=M_in, k=k, r=r)
 
 
 #################################################
@@ -98,24 +108,6 @@ class FeatureMatcher:
 
 
 def colortransfer(src, dst):
-    # s_mean, s_std = cv.meanStdDev(src, mask=cv.inRange(src, 1, 254))
-    # d_mean, d_std = cv.meanStdDev(dst, mask=cv.inRange(dst, 1, 254))
-
-    # s_mean, s_std = np.hstack(s_mean)[0], np.hstack(s_std)[0]
-    # d_mean, d_std = np.hstack(d_mean)[0], np.hstack(d_std)[0]
-
-    # dst_clip = np.clip((dst-d_mean)*(s_std/d_std) + s_mean, 0, 255).astype(np.uint8)
-    # return src, dst_clip
-    # try:
-    #     pcts = np.arange(0,101,10)
-    #     yfit = [np.percentile(dst, k) for k in pcts]
-    #     xfit = [np.percentile(src, k) for k in pcts]
-    #     spline = CubicSpline(xfit, yfit)
-    #     src_remap = np.clip(cv.LUT(src, spline(np.arange(256))),0,255)
-    #     return src_remap.astype(np.uint8), dst
-    # except:
-    #     warnings.warn('COLORMATCH FAILED')
-    #     return cv.equalizeHist(src), cv.equalizeHist(dst)
     srcremap = np.array(exposure.rescale_intensity(src, in_range=(np.percentile(src,1), np.percentile(src,99)))).astype(np.uint8)
     dstremap = np.array(exposure.rescale_intensity(dst, in_range=(np.percentile(dst,1), np.percentile(dst,99)))).astype(np.uint8)
     dstremap = np.array(exposure.match_histograms(dstremap, srcremap)).astype(np.uint8)
@@ -128,7 +120,7 @@ class IterativeMatcher:
     def __init__(self, fmobj=FeatureMatcher()):
         self.fmobj = fmobj
     
-    def step(self, im1, kp2, des2, M_in, k, kp_f, des_f, matches_f):
+    def step(self, im1, M_in, k, kp_f, des_f, matches_f):
         '''
         Takes one step in the iterative FBM process, with an input image and homography alongside
         the keypoints and descriptors for the match image and the total list of keypoints for
@@ -141,7 +133,7 @@ class IterativeMatcher:
         # keypoints using the matcher object. If this match fails, `None` is
         # returned for all fields.
         try:
-            (kp1, des1, matches, M_out) = self.fmobj.match_image_to_kp(im1, kp2, des2, M_in=M_in)
+            (kp1, des1, matches, M_out) = self.fmobj.match_image_to_kp(im1, self.shape2, self.kp2, self.des2, M_in=M_in)
         except Exception as e:
             if k==0: raise e
             return M_in, [], [], []
@@ -196,7 +188,8 @@ class IterativeMatcher:
         # Detect keypoints for the second image. Every iteration will only
         # warp the input first image, so we ensure consistency by precomputing
         # and saving the keypoints for the second image for each use.
-        kp2, des2 = self.fmobj.detector.detectAndCompute(im2, None)
+        self.kp2, self.des2 = self.fmobj.detector.detectAndCompute(im2, None)
+        self.shape2 = im2.shape
 
         # Initialize homography and keypoint match storage
         H_cur = np.eye(3)
@@ -209,7 +202,7 @@ class IterativeMatcher:
         for k in range(n_iters):
             # Take the first step of iterative FBM. For this step, the current homography will be used to find 
             # new matches. From here, we have this iteration's new keypoints and descriptors.
-            H_cur, kp1, des1, new_matches = self.step(im1, kp2, des2, H_cur, k, kp_f, des_f, matches_f)
+            H_cur, kp1, des1, new_matches = self.step(im1, H_cur, k, kp_f, des_f, matches_f)
             if H_cur is None:
                 break
 
@@ -222,7 +215,7 @@ class IterativeMatcher:
             # in the iterative FBM process.
             if len(matches_f) > 4:
                 ptsA = np.array([kp_f[k.queryIdx].pt for k in matches_f])
-                ptsB = np.array([kp2[k.trainIdx].pt for k in matches_f])
+                ptsB = np.array([self.kp2[k.trainIdx].pt for k in matches_f])
                 try:
                     H_f, mask = cv.findHomography(ptsA, ptsB, cv.RANSAC, 3)
                 except:
@@ -230,7 +223,7 @@ class IterativeMatcher:
                 
                 # Use this new cumulative homography to find tie points in the image much like in the first
                 # step, adding these as well to the lists of cumulative matches.
-                H_f, kp1, des1, new_matches = self.step(im1, kp2, des2, H_f, k, kp_f, des_f, matches_f)
+                H_f, kp1, des1, new_matches = self.step(im1, H_f, k, kp_f, des_f, matches_f)
                 if H_f is None:
                     break
                 
@@ -240,20 +233,19 @@ class IterativeMatcher:
 
         # Throw an error if there are no matches, otherwise return the detected matches.
         assert len(matches_f) > 0, "NO MATCHES FOUND"
-        return H_f, kp_f, kp2, matches_f
+        return H_f, kp_f, self.kp2, matches_f
     
     def match_and_plot(self, outfns, im1, im2, colormatch=True, cmatch_fns=None, n_iters=10):
+        # Perform the iterative matching
         (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, colormatch=colormatch, cmatch_fns=cmatch_fns, n_iters=n_iters)
         
         if colormatch:
             im1, im2 = colortransfer(im1,im2)
-
-        # img3 = np.zeros(im2.shape[0], dtype=np.uint8)
+        
+        # Create images for output to assess match quality
         img3 = cv.warpPerspective(im1, H_f, im2.shape[::-1])//2
         cv.imwrite(outfns[2], img3)
         img3 += im2//2
-
-        # img3[:,:,1] = (im2/np.max(im2))**2 * np.max(im2)
         img4 = cv.drawMatches(im1,kp_f,im2,kp2,matches_f,None,flags=cv.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
         img5 = cv.drawKeypoints(im1, kp_f, im1, cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
         img6 = cv.drawKeypoints(im2, kp2, im2, cv.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS)
