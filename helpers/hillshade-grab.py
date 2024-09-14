@@ -6,6 +6,7 @@ import os, shutil
 from osgeo import gdal, gdalconst
 import cv2 as cv
 import numpy as np
+import matplotlib.pyplot as plt
 
 def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
     clon = (minlon+maxlon)/2
@@ -38,20 +39,27 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                 outputBoundsSRS=f'+proj=longlat +a=1737400 +b=1737400 +no_defs'
             ))
 
-	#Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
-    gdal.Warp(f'{workdir}/topo_ortho.tif',f'{workdir}/topo_clip.tif',
-            options=gdal.WarpOptions(
-                format='GTiff',
-                dstSRS=f'+proj=ortho +lat_0={clat} +lon_0={clon} +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
-                #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
-            ))
+	# #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
+    # gdal.Warp(f'{workdir}/topo_ortho.tif',f'{workdir}/topo_clip.tif',
+    #         options=gdal.WarpOptions(
+    #             format='GTiff',
+    #             dstSRS=f'+proj=ortho +lat_0={clat} +lon_0={clon} +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
+    #             #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+    #         ))
     
-    #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
-    gdal.Warp(f'{workdir}/topo_stere.tif',f'{workdir}/topo_clip.tif',
+    # #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
+    # gdal.Warp(f'{workdir}/topo_stere.tif',f'{workdir}/topo_clip.tif',
+    #         options=gdal.WarpOptions(
+    #             format='GTiff',
+    #             dstSRS=f'+proj=stere +lat_0={clat} +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
+    #             #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+    #         ))
+    
+    # Reproject the topography to sinusoidal
+    gdal.Warp(f'{workdir}/topo_sinu.tif',f'{workdir}/topo_clip.tif',
             options=gdal.WarpOptions(
                 format='GTiff',
-                dstSRS=f'+proj=stere +lat_0={clat} +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
-                #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+                dstSRS=f'+proj=sinu +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
             ))
     
 
@@ -76,7 +84,7 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
 
     def makeHSH(alt, az, clon, clat):
         hshfn = f'hillshade_{clon:03.0f}_{clat:03.0f}_{alt:03.0f}_{az:03.0f}'
-        reffile = f"{workdir}/topo_ortho.tif" if clat < 45 else f"{workdir}/topo_stere.tif"
+        reffile = f"{workdir}/topo_sinu.tif" #f"{workdir}/topo_ortho.tif" if clat < 45 else f"{workdir}/topo_stere.tif"
         gdal.DEMProcessing(
             f"{outdir}/{hshfn}.tif", 
             reffile,#f"{workdir}/topo_sinu.tif", 
@@ -86,8 +94,55 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                 alg='ZevenbergenThorne',
                 azimuth=az,
                 altitude=90-alt,
-                zFactor=4
+                scale=30323,
+                zFactor=100000
             ))
+        make_backplane(minlat, minlon, maxlat, maxlon, cv.imread(f"{outdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH))
+        quit()
+    
+    def make_backplane(minlat, minlon, maxlat, maxlon, topo_sinu):
+        # ds = gdal.Open(hshfn)
+        # img = cv.imread(topo_clip, cv.IMREAD_ANYDEPTH)
+        # c, a, b, f, d, e = ds.GetGeoTransform()
+        # print(c,a,b,f,d,e)
+        # def pixel2coord(col, row):
+        #     """Returns global coordinates to pixel center using base-0 raster index"""
+        #     xp = a * col + b * row + a * 0.5 + b * 0.5 + c
+        #     yp = d * col + e * row + d * 0.5 + e * 0.5 + f
+        #     return(xp, yp)
+        print(topo_sinu[len(topo_sinu)//2][0])
+        print(np.max(topo_sinu))
+        print(type(np.max(topo_sinu)))
+        mask = cv.inRange(topo_sinu,1,int(np.max(topo_sinu)))
+        cv.imwrite(f'{workdir}/mask.tif', mask)
+        # pix_lon, pix_lat = np.meshgrid(np.arange(topo_clip.shape[1]),
+        #                                np.arange(topo_clip.shape[0]))
+        # xp, yp = pixel2coord(pix_lat, pix_lon)
+        # plt.imsave(f'{workdir}/xp.png',xp, cmap='binary')
+        # print(topo_clip.shape)
+        # print(lat.shape)
+        # print(lon.shape)
+        # print(np.max(lon))
+        # print(np.max(lat))
+        # cv.imwrite(f'{workdir}/lat.tif', pix_lat.astype(np.uint16))
+        # cv.imwrite(f'{workdir}/lon.tif', pix_lon.astype(np.uint16))
+
+        # gdal.Warp(f'{workdir}/lat_ortho.tif',f'{workdir}/lat.tif',
+        #     options=gdal.WarpOptions(
+        #         format='GTiff',
+        #         dstSRS=f'+proj=ortho +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs',
+        #         SRC_METHOD='NO_GEOTRANSFORM'
+        #         #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+        #     ))
+        # gdal.Warp(f'{workdir}/lon_ortho.tif',f'{workdir}/lon.tif',
+        #     options=gdal.WarpOptions(
+        #         format='GTiff',
+        #         dstSRS=f'+proj=ortho +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs',
+        #         transformerOptions='SRC_METHOD=NO_GEOTRANSFORM'
+        #         #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
+        #     ))
+        # cv.imwrite(f'{workdir}/lat.tif', lat.astype(np.uint16))
+        # cv.imwrite(f'{workdir}/lon.tif', lon.astype(np.uint16))
         # gdal.Translate(
         #     f"{outdir}/{hshfn}_rmp.tif", 
         #     f"{outdir}/{hshfn}.tif", 
@@ -96,7 +151,7 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
         #         outputType=gdalconst.GDT_Byte,
         #         scaleParams=[]
         # ))
-        
+    
         # im = cv.imread(f"{outdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH)
         # imclip = np.clip(im, np.percentile(im,1), np.percentile(im,99))
         # cv.imwrite(f"{outdir}/{hshfn}_REMAP1.tif", imclip.astype(np.uint8))
@@ -109,8 +164,9 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
     
     for (alt,az) in configs:
         makeHSH(alt, az, clon, clat)
-    
-    shutil.rmtree(workdir)
+    # make_backplane(minlat, minlon, maxlat, maxlon, cv.imread(f'{workdir}/topo_sinu.tif', cv.IMREAD_ANYDEPTH))
+    # make_backplane(minlat, minlon, maxlat, maxlon, 'hshtestdir/hillshade_-11_-73_020_315.tif')
+    # shutil.rmtree(workdir)
     
 
 if __name__ == "__main__":

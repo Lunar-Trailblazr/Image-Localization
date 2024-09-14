@@ -15,7 +15,7 @@
 
 # If running with a list of m3ids, ensure Results/Worked/ and Results/Failed/ exist as directories for output.
 
-# Depends on ImageReg.py and M3_Preprocess.py
+# Depends on ImageReg.py and M3.py
 
 # Kevin Gauld (kgauld@caltech.edu)
 # June 2024
@@ -30,6 +30,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image
 import cv2 as cv
+import matplotlib.pyplot as plt
 
 from M3 import M3
 from ImageReg import IterativeMatcher
@@ -65,6 +66,31 @@ DF_COLS = ['M3ID', 'WORKED',
            'BND_LON', 'BND_LON_MIN', 'BND_LON_MAX',  
            'BND_LAT', 'BND_LAT_MIN', 'BND_LAT_MAX',
            'INC', 'AZM', 'INC_MATCH', 'AZM_MATCH', 'N_MATCHES']
+def get_backplanes(hsh_fn, rdn_fn, M3_OBJ, H):
+    hsh_info = gdal.Open(hsh_fn)
+
+    hsh_im = cv.imread(hsh_fn, cv.IMREAD_ANYDEPTH)
+    rdn_im = cv.imread(rdn_fn, cv.IMREAD_ANYDEPTH)
+
+    hsh_tf = hsh_info.GetGeoTransform()
+    proj_xy = lambda x_pix, y_pix, tf: (tf[0]+x_pix*tf[1], tf[3]+y_pix*tf[5], 0)
+
+    mask = cv.warpPerspective(np.ones(rdn_im.shape), H, hsh_im.shape[::-1])
+    mask = cv.dilate(mask, np.ones((5,5)), iterations=1)
+
+    mask_imagezone = np.where(mask==1)
+    maskpoints = [proj_xy(mask_imagezone[1][k], mask_imagezone[0][k], hsh_tf) for k in range(len(mask_imagezone[0]))]
+    backplane_data = np.array(M3_OBJ.out2in_tf.TransformPoints(maskpoints))
+
+    lonimg_hsh = np.ones(mask.shape)*500
+    lonimg_hsh[np.where(mask==1)] = backplane_data[:,0]
+    lon_backplane = cv.warpPerspective(lonimg_hsh, np.linalg.inv(H), rdn_im.shape[::-1])
+
+    latimg_hsh = np.ones(mask.shape)*500
+    latimg_hsh[np.where(mask==1)] = backplane_data[:,1]
+    lat_backplane = cv.warpPerspective(latimg_hsh, np.linalg.inv(H), rdn_im.shape[::-1])
+
+    return lon_backplane, lat_backplane
 
 def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     m3id    = M3_OBJ.m3id
@@ -96,8 +122,8 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     # Read in the images
     RDN = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
     HSH = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
-    success = False
 
+    success = False
     #Run image match, providing the filenames to write output to.
     try:
         H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', 
@@ -117,8 +143,16 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
         shutil.rmtree(f"{workdir}/{m3id}")
         return False, inshd_fm, None, 0
 
+
     #Return True if process worked, else remove the temp dir and return False
     if success or os.path.isfile(f"{out_fm}_match.tif"):
+        print('MATCH SUCCEEDED! Generating backplanes...')
+        lon_bp, lat_bp = get_backplanes(inshd_fm, inrdn_fm, M3_OBJ, H_f)
+        np.save(f'{workdir}/{m3id}/{m3id}_LON.npy', lon_bp)
+        plt.imsave(f'{workdir}/{m3id}/{m3id}_LON.png', lon_bp)
+        np.save(f'{workdir}/{m3id}/{m3id}_LAT.npy', lat_bp)
+        plt.imsave(f'{workdir}/{m3id}/{m3id}_LAT.png', lat_bp)
+        np.save(f'{workdir}/{m3id}/{m3id}_HOMOGRAPHY.npy', H_f)
         return True, inshd_fm, [f'{out_fm}_match.tif', 
                                 f'{out_fm}_colormatched.tif'], len(matches_f)
     else:
