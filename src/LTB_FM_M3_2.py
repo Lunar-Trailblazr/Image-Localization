@@ -21,7 +21,7 @@
 # June 2024
 
 
-import os, sys, shutil, traceback
+import os, sys, shutil, traceback, logging
 
 from osgeo import gdal, osr, gdalconst
 from osgeo_utils import gdal_calc
@@ -35,6 +35,24 @@ import matplotlib.pyplot as plt
 from M3 import M3
 from ImageReg import IterativeMatcher
 
+logging.basicConfig(filename='Results/runlog.log',
+                    filemode='a',
+                    format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                    datefmt='%H:%M:%S',
+                    level=logging.DEBUG)
+logging.getLogger("PIL.TiffImagePlugin").disabled=True
+
+# define a Handler which writes INFO messages or higher to the sys.stderr
+console = logging.StreamHandler()
+console.setLevel(logging.INFO)
+# set a format which is simpler for console use
+formatter = logging.Formatter('%(name)-12s: %(levelname)-8s %(message)s')
+# tell the handler to use this format
+console.setFormatter(formatter)
+# add the handler to the root logger
+logging.getLogger('').addHandler(console)
+
+logging.info('STARTING NEW RUN')
 
 FM_OBJ = IterativeMatcher()
 
@@ -66,7 +84,7 @@ DF_COLS = ['M3ID', 'WORKED',
            'BND_LON', 'BND_LON_MIN', 'BND_LON_MAX',  
            'BND_LAT', 'BND_LAT_MIN', 'BND_LAT_MAX',
            'INC', 'AZM', 'INC_MATCH', 'AZM_MATCH', 'N_MATCHES']
-def get_backplanes(hsh_fn, rdn_fn, M3_OBJ, H):
+def get_backplanes(rdn_fn, hsh_fn, M3_OBJ, H):
     hsh_info = gdal.Open(hsh_fn)
 
     hsh_im = cv.imread(hsh_fn, cv.IMREAD_ANYDEPTH)
@@ -137,28 +155,31 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
                                                                                 f'{out_fm}_NORM.tif',])
     except Exception as e:
         # Uncomment the following line for debugging exceptions
-        # print(traceback.format_exc())
-        print(e)
-        print("MATCH FAILED")
-        shutil.rmtree(f"{workdir}/{m3id}")
+        logging.debug(traceback.format_exc())
+        logging.error(f"{m3id} FAILED: {e}")
+        # shutil.rmtree(f"{workdir}/{m3id}")
         return False, inshd_fm, None, 0
-
-
-    #Return True if process worked, else remove the temp dir and return False
-    if success or os.path.isfile(f"{out_fm}_match.tif"):
-        print('MATCH SUCCEEDED! Generating backplanes...')
-        lon_bp, lat_bp = get_backplanes(inshd_fm, inrdn_fm, M3_OBJ, H_f)
-        np.save(f'{workdir}/{m3id}/{m3id}_LON.npy', lon_bp)
-        plt.imsave(f'{workdir}/{m3id}/{m3id}_LON.png', lon_bp)
-        np.save(f'{workdir}/{m3id}/{m3id}_LAT.npy', lat_bp)
-        plt.imsave(f'{workdir}/{m3id}/{m3id}_LAT.png', lat_bp)
-        np.save(f'{workdir}/{m3id}/{m3id}_HOMOGRAPHY.npy', H_f)
-        return True, inshd_fm, [f'{out_fm}_match.tif', 
-                                f'{out_fm}_colormatched.tif'], len(matches_f)
-    else:
-        shutil.rmtree(f"{workdir}/{m3id}")
+    
+    # If matching failed, return that the match failed
+    if not success and not os.path.isfile(f"{out_fm}_match.tif"):
         return False, inshd_fm, None, len(matches_f)
     
+    # Create the backplanes and save them to files
+    logging.info(f'{m3id} SUCCEEDED! Generating backplanes...')
+    lon_bp, lat_bp = get_backplanes(inrdn_fm, inshd_fm, M3_OBJ, H_f)
+    np.save(f'{workdir}/{m3id}/{m3id}_LON.npy', lon_bp)
+    plt.imsave(f'{workdir}/{m3id}/{m3id}_LON.png', lon_bp)
+    np.save(f'{workdir}/{m3id}/{m3id}_LAT.npy', lat_bp)
+    plt.imsave(f'{workdir}/{m3id}/{m3id}_LAT.png', lat_bp)
+    np.save(f'{workdir}/{m3id}/{m3id}_HOMOGRAPHY.npy', H_f)
+
+    if not (1<np.ptp(lon_bp)<10 and 1<np.ptp(lat_bp)<10):
+        logging.error(f"{m3id} BACKPLANE ERROR! MATCH FAILED!")
+        return False, inshd_fm, None, len(matches_f)
+    
+
+    return True, inshd_fm, [f'{out_fm}_match.tif', 
+                            f'{out_fm}_colormatched.tif'], len(matches_f)
 
 def run_match(m3id):
     '''
@@ -275,24 +296,24 @@ def run_match(m3id):
     matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, workdir)
     first_hshfn = hsh_fn
     infodict['FIRST_TRY']=matched
-    if not matched:
-        # Retry matches for azm=[azmmean-60, azmmean+60] and 
-        # inc = [10,80] in intervals of 10
-        print("RETRYING MATCH")
-        azm, inc = np.meshgrid(np.arange(M3_OBJ.azm-60, M3_OBJ.azm+61, 10),
-                               np.arange( 10, 90, 10))
-        coords = np.vstack((inc.flatten(), azm.flatten())).T
-        for k in range(len(coords)):
-            matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, workdir, inc=coords[k][0], azm=coords[k][1])
-            if matched:
-                infodict['INC_MATCH'] = coords[k][0]
-                infodict['AZM_MATCH'] = coords[k][1]
-                infodict['N_MATCHES'] = n_matches
-                break
-    else:
-        infodict['INC_MATCH'] = infodict['INC']
-        infodict['AZM_MATCH'] = infodict['AZM']
-        infodict['N_MATCHES'] = n_matches
+    # if not matched:
+    #     # Retry matches for azm=[azmmean-60, azmmean+60] and 
+    #     # inc = [10,80] in intervals of 10
+    #     print("RETRYING MATCH")
+    #     azm, inc = np.meshgrid(np.arange(M3_OBJ.azm-60, M3_OBJ.azm+61, 10),
+    #                            np.arange( 10, 90, 10))
+    #     coords = np.vstack((inc.flatten(), azm.flatten())).T
+    #     for k in range(len(coords)):
+    #         matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, workdir, inc=coords[k][0], azm=coords[k][1])
+    #         if matched:
+    #             infodict['INC_MATCH'] = coords[k][0]
+    #             infodict['AZM_MATCH'] = coords[k][1]
+    #             infodict['N_MATCHES'] = n_matches
+    #             break
+    # else:
+    infodict['INC_MATCH'] = infodict['INC']
+    infodict['AZM_MATCH'] = infodict['AZM']
+    infodict['N_MATCHES'] = n_matches
     
     # If there has been any match, move the matching directory to Results/Worked, else 
     # write a file to Results/Failed indicating no match was found.
@@ -304,9 +325,10 @@ def run_match(m3id):
         if hsh_fn != first_hshfn:
             shutil.move(first_hshfn, f"Results/Worked/{m3id}/{first_hshfn.split('/')[-1]}")
     else:
-        infodict['N_MATCHES'] = 0
-        os.mkdir(f"Results/Failed/{m3id}")
+        shutil.move(f"{workdir}/{m3id}", f"Results/Failed/{m3id}")
         shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Failed/{m3id}/{m3id}_RDN_average_byte.tif")
+        # os.mkdir(f"Results/Failed/{m3id}")
+        # shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Failed/{m3id}/{m3id}_RDN_average_byte.tif")
         shutil.move(first_hshfn, f"Results/Failed/{m3id}/{first_hshfn.split('/')[-1]}")
     infodict['WORKED'] = matched
     shutil.rmtree(workdir)
@@ -314,7 +336,6 @@ def run_match(m3id):
 
 
 if __name__ == "__main__":
-
     if len(sys.argv) == 2:
         print(run_match(sys.argv[1]))
         quit()
@@ -331,14 +352,13 @@ if __name__ == "__main__":
         
         for k_m3id in range(len(m3ids)):
             if m3ids[k_m3id] in data['M3ID'].values:
-                print(f"Skipping {m3ids[k_m3id]} - MATCH {'WORKED' if data[data['M3ID'] == m3ids[k_m3id]]['WORKED'].values[0] else 'FAILED'}")
+                logging.info(f"Skipping {m3ids[k_m3id]} - MATCH {'WORKED' if data[data['M3ID'] == m3ids[k_m3id]]['WORKED'].values[0] else 'FAILED'}")
                 continue
+            logging.info(f"Starting {m3ids[k_m3id]}")
             k_data = run_match(m3ids[k_m3id])
             data = pd.concat([data, pd.DataFrame(k_data, index=[0])])
             data.to_csv(f'Results/{fnout}',index=False)
     else:
-        print("INVALID PARAMS")
-        print("SINGLE RUN:\t python LTB_FM_M3.py <M3ID>")
-        print("BATCH RUN:\t python LTB_FM_M3.py -f <M3 list file>")
+        logging.error("INVALID PARAMS\nSINGLE RUN:\t python LTB_FM_M3.py <M3ID>\nBATCH RUN:\t python LTB_FM_M3.py -f <M3 list file>")
     
 

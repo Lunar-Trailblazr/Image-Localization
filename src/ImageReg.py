@@ -8,6 +8,7 @@ import numpy as np
 from scipy.interpolate import CubicSpline
 import warnings
 from skimage import exposure
+import logging
 
 #################################################
 ############### SIFT DETECTOR ###################
@@ -56,12 +57,12 @@ class FeatureMatcher:
         # Due to some assumptions within OpenCV, clip to first 2^18 keypoints
         # See https://github.com/opencv/opencv/issues/5700
         if len(des1) >= 1<<18:
-            warnings.warn(f"Too many kps (hillshade {len(des1)}), only using first 2^18 kps")
+            logging.warning(f"Too many kps (hillshade {len(des1)}), only using first 2^18 kps")
             des1 = des1[:1<<18-1]
             kp1 = tuple(np.array(kp1)[:1<<18-1])
         
         if len(des2) >= 1<<18:
-            warnings.warn(f"Too many kps (m3 {len(des2)}), only using first 2^18 kps")
+            logging.warning(f"Too many kps (m3 {len(des2)}), only using first 2^18 kps")
             des2 = des2[:(1<<18)-1]
             kp2 = tuple(np.array(kp2)[:(1<<18)-1])
         
@@ -90,6 +91,9 @@ class FeatureMatcher:
         ptsB = np.array([kp2[k[0].trainIdx].pt for k in matches])
         try: # RANSAC
             homography, mask = cv.findHomography(ptsA, ptsB, cv.RANSAC, 3.)
+            if homography is None:
+                logging.error(f"RANSAC FAILURE! Trying Least squares. N_MATCHES: {len(ptsA)}")
+                raise Exception()
         except: # Least squares
             homography, mask = cv.findHomography(ptsA, ptsB, 0)
 
@@ -108,9 +112,13 @@ class FeatureMatcher:
 
 
 def colortransfer(src, dst):
-    srcremap = np.array(exposure.rescale_intensity(src, in_range=(np.percentile(src,1), np.percentile(src,99)))).astype(np.uint8)
-    dstremap = np.array(exposure.rescale_intensity(dst, in_range=(np.percentile(dst,1), np.percentile(dst,99)))).astype(np.uint8)
-    dstremap = np.array(exposure.match_histograms(dstremap, srcremap)).astype(np.uint8)
+    mask = np.where(dst > 0)
+    get_bnds = lambda src : (np.percentile(src, 1), np.percentile(src,99))
+    srcremap = np.array(exposure.rescale_intensity(src, in_range=get_bnds(src))).astype(np.uint8)
+    dst_mask = np.array(exposure.rescale_intensity(dst[mask], in_range=get_bnds(dst[mask]))).astype(np.uint8)
+    dst_mask = np.array(exposure.match_histograms(dst_mask, srcremap.flatten())).astype(np.uint8)
+    dstremap = dst.copy()
+    dstremap[mask] = dst_mask
     return srcremap, dstremap
 
 class IterativeMatcher:
@@ -218,6 +226,9 @@ class IterativeMatcher:
                 ptsB = np.array([self.kp2[k.trainIdx].pt for k in matches_f])
                 try:
                     H_f, mask = cv.findHomography(ptsA, ptsB, cv.RANSAC, 3)
+                    if H_f is None:
+                        logging.error(f"RANSAC FAILURE! Trying Least squares. N_MATCHES: {len(ptsA)}")
+                        raise Exception()
                 except:
                     H_f, mask = cv.findHomography(ptsA, ptsB, 0)
                 
