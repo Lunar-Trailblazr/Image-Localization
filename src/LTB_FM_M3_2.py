@@ -117,6 +117,8 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
     alt     = 90 - inc
 
     #Make temporary dir for match image
+    if os.path.isdir(f"{workdir}/{m3id}"):
+        shutil.rmtree(f"{workdir}/{m3id}")
     os.mkdir(f"{workdir}/{m3id}")
 
     #Define files for RDN, hillshade, match output
@@ -134,7 +136,7 @@ def checkFM(M3_OBJ, workdir, inc=None, azm=None):
             alg='ZevenbergenThorne',
             azimuth=az,
             altitude=alt,
-            #zFactor=2
+            zFactor=2
         ))
     
     # Read in the images
@@ -239,7 +241,8 @@ def run_match(m3id):
     rdn_image_fn = M3_OBJ.get_RDN_8bit_crop(bands=np.arange(*band_bnds),
                                        w_x=60800, w_y=74600,
                                        outdir=workdir,
-                                       outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif')
+                                       outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif',
+                                       contrast_mode='none')
 
     ####### Populate the data logger
     
@@ -297,6 +300,17 @@ def run_match(m3id):
     first_hshfn = hsh_fn
     infodict['FIRST_TRY']=matched
     # if not matched:
+    #     logging.info("Actual OBS failed, trying default OBS (inc 45 az 315)")
+    #     matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, workdir,
+    #                                                     inc=45, azm=315)
+    #     if matched:
+    #         infodict['INC_MATCH'] = 45
+    #         infodict['AZM_MATCH'] = 315
+    # else:
+    infodict['INC_MATCH'] = infodict['INC']
+    infodict['AZM_MATCH'] = infodict['AZM']
+        
+    # if not matched:
     #     # Retry matches for azm=[azmmean-60, azmmean+60] and 
     #     # inc = [10,80] in intervals of 10
     #     print("RETRYING MATCH")
@@ -311,8 +325,7 @@ def run_match(m3id):
     #             infodict['N_MATCHES'] = n_matches
     #             break
     # else:
-    infodict['INC_MATCH'] = infodict['INC']
-    infodict['AZM_MATCH'] = infodict['AZM']
+    infodict['WORKED'] = matched
     infodict['N_MATCHES'] = n_matches
     
     # If there has been any match, move the matching directory to Results/Worked, else 
@@ -330,7 +343,9 @@ def run_match(m3id):
         # os.mkdir(f"Results/Failed/{m3id}")
         # shutil.move(f"{workdir}/{m3id}_RDN_average_byte.tif", f"Results/Failed/{m3id}/{m3id}_RDN_average_byte.tif")
         shutil.move(first_hshfn, f"Results/Failed/{m3id}/{first_hshfn.split('/')[-1]}")
-    infodict['WORKED'] = matched
+        if hsh_fn != first_hshfn:
+            shutil.move(first_hshfn, f"Results/Failed/{m3id}/{first_hshfn.split('/')[-1]}")
+    
     shutil.rmtree(workdir)
     return infodict
 

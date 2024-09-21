@@ -14,6 +14,8 @@ import numpy as np
 from PIL import Image
 import errno
 import os
+from skimage import exposure
+import cv2 as cv
 
 class M3:
     def __init__(self, m3id, m3dir='Data_M3', fn_postfix='', resolution=200):
@@ -164,67 +166,42 @@ class M3:
         # Return the output filename
         return outfn
     
-    def get_RDN_8bit(self, bands, outdir=None, outfn=None):
-        '''
-        Create a radiance product, rastered to 8 bit values.
-        Returns product filename
 
-        Uses self.get_RDN_img
-
-        If no output directory is given, defaults to current directory
-        If no filename is given, defaults to {m3id}_RDN_average_byte.tif
-        '''
-        rdn_orig_fn = self.get_RDN_img(bands, outdir=outdir)
-
+    def get_RDN_8bit_crop(self, bands, w_x=None, w_y=None, outdir=None, outfn=None, contrast_mode='none'):
         if outfn is None:
             outfn = f'{self.m3id}_RDN_average_byte.tif'
         if outdir is not None:
             outfn = outdir + '/' + outfn
 
-        # Creates 8bit raster based on min/max image values
-        med_im = np.array(Image.open(rdn_orig_fn))
-        gdal.Translate(outfn, rdn_orig_fn, 
-                options=gdal.TranslateOptions(
-                    format='GTiff',
-                    outputType=gdalconst.GDT_Byte,
-                    scaleParams=[[med_im.min(),med_im.max(),1,255]]
-                ))
-        # Removes original pre-raster product
-        os.remove(rdn_orig_fn)
+        rdn_orig = self.get_RDN_img(bands, outdir=outdir, outfn='rdnorig.tif')
         
-        # Returns output file
-        return outfn
-    
-    def get_RDN_8bit_crop(self, bands, w_x, w_y=None, outdir=None, outfn=None):
+        orig = np.array(Image.open(rdn_orig))
+
+        if w_x is None:
+            w_x = orig.shape[1]*self.resolution
         if w_y is None:
             w_x = w_y
-        rdn_8bit_orig = self.get_RDN_8bit(bands, outdir=outdir, outfn='8bitorig.tif')
-        if outfn is None:
-            outfn = f'{self.m3id}_RDN_average_byte.tif'
-        if outdir is not None:
-            outfn = outdir + '/' + outfn
-        
-        orig = np.array(Image.open(rdn_8bit_orig))
+            
         center = np.array(orig.shape)//2
-        
+
         pix = [min(w_y//self.resolution, orig.shape[0])//2,
                min(w_x//self.resolution, orig.shape[1])//2]
         newimg = orig[center[0]-pix[0]:center[0]+pix[0],
                       center[1]-pix[1]:center[1]+pix[1]]
         
-        Image.fromarray(newimg).save(outfn)
-        os.remove(rdn_8bit_orig)
-        return outfn
-
-    def get_RDN_8bit_square(self, bands, outdir=None, outfn=None):
-        rdn_8bit_orig = self.get_RDN_8bit(bands, outdir=outdir, outfn='8bitorig.tif')
-        if outfn is None:
-            outfn = f'{self.m3id}_RDN_average_byte.tif'
-        if outdir is not None:
-            outfn = outdir + '/' + outfn
-        orig = np.array(Image.open(rdn_8bit_orig))
-        mindim = min(orig.shape)
-        os.remove(rdn_8bit_orig)
-
-        return self.get_RDN_8bit_crop(bands, w_x=mindim, outdir=outdir, outfn=outfn)
+        if contrast_mode == 'equalize':
+            newimg = exposure.rescale_intensity(newimg, out_range=(0,1))
+            newimg = exposure.equalize_adapthist(newimg)
+            newimg = np.array(exposure.rescale_intensity(newimg, out_range=(0,255))).astype(np.uint8)
+        else:
+            if contrast_mode == 'rescale':
+                inbounds = (np.percentile(newimg, 1), np.percentile(newimg, 99))
+            else:
+                inbounds = (np.min(newimg), np.max(newimg))
+            newimg = np.array(exposure.rescale_intensity(newimg,
+                                                in_range=inbounds,
+                                                out_range=(0,255))).astype(np.uint8)
         
+        Image.fromarray(newimg).save(outfn)
+        os.remove(rdn_orig)
+        return outfn

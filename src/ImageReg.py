@@ -114,12 +114,12 @@ class FeatureMatcher:
 def colortransfer(src, dst):
     mask = np.where(dst > 0)
     get_bnds = lambda src : (np.percentile(src, 1), np.percentile(src,99))
-    srcremap = np.array(exposure.rescale_intensity(src, in_range=get_bnds(src))).astype(np.uint8)
+    # srcremap = np.array(exposure.rescale_intensity(src, in_range=get_bnds(src))).astype(np.uint8)
     dst_mask = np.array(exposure.rescale_intensity(dst[mask], in_range=get_bnds(dst[mask]))).astype(np.uint8)
-    dst_mask = np.array(exposure.match_histograms(dst_mask, srcremap.flatten())).astype(np.uint8)
+    dst_mask = np.array(exposure.match_histograms(dst_mask, src.flatten())).astype(np.uint8)
     dstremap = dst.copy()
     dstremap[mask] = dst_mask
-    return srcremap, dstremap
+    return src, dstremap
 
 class IterativeMatcher:
     '''

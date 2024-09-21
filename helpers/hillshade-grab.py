@@ -7,6 +7,7 @@ from osgeo import gdal, gdalconst
 import cv2 as cv
 import numpy as np
 import matplotlib.pyplot as plt
+import glob
 
 def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
     clon = (minlon+maxlon)/2
@@ -38,22 +39,6 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                               maxlat),
                 outputBoundsSRS=f'+proj=longlat +a=1737400 +b=1737400 +no_defs'
             ))
-
-	# #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
-    # gdal.Warp(f'{workdir}/topo_ortho.tif',f'{workdir}/topo_clip.tif',
-    #         options=gdal.WarpOptions(
-    #             format='GTiff',
-    #             dstSRS=f'+proj=ortho +lat_0={clat} +lon_0={clon} +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
-    #             #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
-    #         ))
-    
-    # #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
-    # gdal.Warp(f'{workdir}/topo_stere.tif',f'{workdir}/topo_clip.tif',
-    #         options=gdal.WarpOptions(
-    #             format='GTiff',
-    #             dstSRS=f'+proj=stere +lat_0={clat} +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
-    #             #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
-    #         ))
     
     # Reproject the topography to sinusoidal
     gdal.Warp(f'{workdir}/topo_sinu.tif',f'{workdir}/topo_clip.tif',
@@ -62,28 +47,17 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                 dstSRS=f'+proj=sinu +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
             ))
     
-
-    #Reproject topography to sinusoidal to increase chances of a match. Can't get the $clon variable in the proj4 syntax, so sending it to temp file, then executing that.
-    # gdal.Warp(f'{workdir}/topo_clip.tif',inlola,
-    #         options=gdal.WarpOptions(
-    #             format='GTiff',
-    #             dstSRS=f'+proj=ortho +lat_0={clat} +lon_0={clon} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs'
-    #             #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
-    #         ))
+    sinu_img = cv.imread(f'{workdir}/topo_sinu.tif', cv.IMREAD_ANYDEPTH)
+    plt.figure(figsize=(10,10))
+    plt.hist(sinu_img.flatten(), 255)
+    plt.savefig(f'{workdir}/sinu_hist.png')
+    print(np.max(sinu_img))
+    sinu_mask = cv.inRange(sinu_img, 32767, 32767)
+    sinu_mask = cv.dilate(sinu_mask, np.ones((5,5)), iterations=1)
     
-    # #Clip the global topography to the bounding box. The LOLA DEM is 60 m/px and does not need to be resampled for this procedure. Only clip.
-    # gdal.Warp(f'{workdir}/topo_sinu.tif', f'{workdir}/topo_clip.tif',
-    #         options = gdal.WarpOptions(
-    #             format='GTiff',
-    #             outputBounds=(minlon,
-    #                           minlat,
-    #                           maxlon,
-    #                           maxlat),
-    #             outputBoundsSRS=f'+proj=longlat +a=1737400 +b=1737400 +no_defs'
-    #         ))
 
-    def makeHSH(alt, az, clon, clat):
-        hshfn = f'hillshade_{clon:03.0f}_{clat:03.0f}_{alt:03.0f}_{az:03.0f}'
+    def makeHSH(alt, az, clon, clat, zfactor=100000):
+        hshfn = f'hillshade_{clon:03.0f}_{clat:03.0f}_{alt:03.0f}_{az:03.0f}_{zfactor}'
         reffile = f"{workdir}/topo_sinu.tif" #f"{workdir}/topo_ortho.tif" if clat < 45 else f"{workdir}/topo_stere.tif"
         gdal.DEMProcessing(
             f"{outdir}/{hshfn}.tif", 
@@ -94,76 +68,17 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
                 alg='ZevenbergenThorne',
                 azimuth=az,
                 altitude=90-alt,
-                scale=30323,
-                zFactor=100000
+                #scale=30323,
+                zFactor=zfactor
             ))
-        make_backplane(minlat, minlon, maxlat, maxlon, cv.imread(f"{outdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH))
-        quit()
+        return f"{outdir}/{hshfn}.tif"
     
-    def make_backplane(minlat, minlon, maxlat, maxlon, topo_sinu):
-        # ds = gdal.Open(hshfn)
-        # img = cv.imread(topo_clip, cv.IMREAD_ANYDEPTH)
-        # c, a, b, f, d, e = ds.GetGeoTransform()
-        # print(c,a,b,f,d,e)
-        # def pixel2coord(col, row):
-        #     """Returns global coordinates to pixel center using base-0 raster index"""
-        #     xp = a * col + b * row + a * 0.5 + b * 0.5 + c
-        #     yp = d * col + e * row + d * 0.5 + e * 0.5 + f
-        #     return(xp, yp)
-        print(topo_sinu[len(topo_sinu)//2][0])
-        print(np.max(topo_sinu))
-        print(type(np.max(topo_sinu)))
-        mask = cv.inRange(topo_sinu,1,int(np.max(topo_sinu)))
-        cv.imwrite(f'{workdir}/mask.tif', mask)
-        # pix_lon, pix_lat = np.meshgrid(np.arange(topo_clip.shape[1]),
-        #                                np.arange(topo_clip.shape[0]))
-        # xp, yp = pixel2coord(pix_lat, pix_lon)
-        # plt.imsave(f'{workdir}/xp.png',xp, cmap='binary')
-        # print(topo_clip.shape)
-        # print(lat.shape)
-        # print(lon.shape)
-        # print(np.max(lon))
-        # print(np.max(lat))
-        # cv.imwrite(f'{workdir}/lat.tif', pix_lat.astype(np.uint16))
-        # cv.imwrite(f'{workdir}/lon.tif', pix_lon.astype(np.uint16))
-
-        # gdal.Warp(f'{workdir}/lat_ortho.tif',f'{workdir}/lat.tif',
-        #     options=gdal.WarpOptions(
-        #         format='GTiff',
-        #         dstSRS=f'+proj=ortho +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs',
-        #         SRC_METHOD='NO_GEOTRANSFORM'
-        #         #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
-        #     ))
-        # gdal.Warp(f'{workdir}/lon_ortho.tif',f'{workdir}/lon.tif',
-        #     options=gdal.WarpOptions(
-        #         format='GTiff',
-        #         dstSRS=f'+proj=ortho +k=1 +x_0=0 +y_0=0 +a=1737400 +b=1737400 +units=m +no_defs',
-        #         transformerOptions='SRC_METHOD=NO_GEOTRANSFORM'
-        #         #dstSRS=f'+proj=tmerc +lon_0={clon} +lat_0={clat} +x_0=0 +y_0=0 +a=1737400 +b=1737400 +no_defs'
-        #     ))
-        # cv.imwrite(f'{workdir}/lat.tif', lat.astype(np.uint16))
-        # cv.imwrite(f'{workdir}/lon.tif', lon.astype(np.uint16))
-        # gdal.Translate(
-        #     f"{outdir}/{hshfn}_rmp.tif", 
-        #     f"{outdir}/{hshfn}.tif", 
-        #     options=gdal.TranslateOptions(
-        #         format='GTiff',
-        #         outputType=gdalconst.GDT_Byte,
-        #         scaleParams=[]
-        # ))
+    ofns = []
+    for zf in np.arange(1, 15, 1):
+        for (alt,az) in configs:
+            ofns.append(makeHSH(alt, az, clon, clat, zfactor=zf))
     
-        # im = cv.imread(f"{outdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH)
-        # imclip = np.clip(im, np.percentile(im,1), np.percentile(im,99))
-        # cv.imwrite(f"{outdir}/{hshfn}_REMAP1.tif", imclip.astype(np.uint8))
-        # imclip = imclip - np.mean(imclip)
-        # imclip = (imclip/np.ptp(imclip))*255 + 128
-        # imclip = np.clip(imclip,0,255)
-        # cv.imwrite(f"{outdir}/{hshfn}_REMAP.tif", imclip.astype(np.uint8))
-        # cv.imwrite(f"{outdir}/{hshfn}.tif", 
-        #            cv.imread(f"{workdir}/{hshfn}.tif", cv.IMREAD_ANYDEPTH))
-    
-    for (alt,az) in configs:
-        makeHSH(alt, az, clon, clat)
+    return ofns, sinu_mask
     # make_backplane(minlat, minlon, maxlat, maxlon, cv.imread(f'{workdir}/topo_sinu.tif', cv.IMREAD_ANYDEPTH))
     # make_backplane(minlat, minlon, maxlat, maxlon, 'hshtestdir/hillshade_-11_-73_020_315.tif')
     # shutil.rmtree(workdir)
@@ -174,14 +89,77 @@ if __name__ == "__main__":
     # get_hillshade(6.07941, 81.60264,
     #               11.72785, 87.45002, configs)
     
-    configs = [(45, 315), (20, 315), (70, 315)]
+    configs = [(10,315)]
     latbnds = [(-5,5),(15,25),(35,60), (50,80), (80,89.9)]
     out_fn = 'hshtestdir'
     # for k in latbnds:
     #     get_hillshade(k[0], 80,
     #                   k[1], 90, configs, outdir=out_fn)
-    get_hillshade(-79.93014228527048, 344.57656629590826-360,
-                  -65.92539924277551, 352.6450695389247-360, configs, outdir=out_fn)
+    ofns1, mask10 = get_hillshade(-79.93014228527048, 344.57656629590826-360,
+                  -65.92539924277551, 352.6450695389247-360, [(10,315)], outdir=out_fn)
+    ofns2, mask45 = get_hillshade(-79.93014228527048, 344.57656629590826-360,
+                  -65.92539924277551, 352.6450695389247-360, [(45,315)], outdir=out_fn)
+    ofns3, mask80 = get_hillshade(-79.93014228527048, 344.57656629590826-360,
+                  -65.92539924277551, 352.6450695389247-360, [(80,315)], outdir=out_fn)
+    plt.figure(figsize=(10,10))
+    imgs10 = []
+    for k in ofns1:
+        im = cv.imread(k, cv.IMREAD_ANYDEPTH)
+        imgs10.append(im)
+        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1].split('.')[0], alpha=0.3)
+    plt.legend()
+    plt.savefig(f'{out_fn}/output_hist_10.png')
+
+    plt.figure(figsize=(10,10))
+    imgs45 = []
+    for k in ofns2:
+        im = cv.imread(k, cv.IMREAD_ANYDEPTH)
+        imgs45.append(im)
+        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1].split('.')[0], alpha=0.3)
+    plt.legend()
+    plt.savefig(f'{out_fn}/output_hist_45.png')
+
+    plt.figure(figsize=(10,10))
+    imgs80 = []
+    for k in ofns3:
+        im = cv.imread(k, cv.IMREAD_ANYDEPTH)
+        imgs80.append(im)
+        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1].split('.')[0], alpha=0.3)
+    plt.legend()
+    plt.savefig(f'{out_fn}/output_hist_80.png')
+
+    print('outputhists done')
+
+    im_mean_10 = np.mean(imgs10, axis=0)
+    im_mean_45 = np.mean(imgs45, axis=0)
+    im_mean_80 = np.mean(imgs80, axis=0)
+
+    im_med_10 = np.median(imgs10, axis=0)
+    im_med_45 = np.median(imgs45, axis=0)
+    im_med_80 = np.median(imgs80, axis=0)
+    
+    plt.figure(figsize=(10,10))
+    plt.hist(im_mean_10[np.where(im_mean_10>1)],255,alpha=0.3,label='10deg')
+    plt.hist(im_mean_45[np.where(im_mean_45>1)],255,alpha=0.3,label='45deg')
+    plt.hist(im_mean_80[np.where(im_mean_80>1)],255,alpha=0.3,label='80deg')
+    plt.legend()
+    plt.savefig(f'{out_fn}/hist_means.png')
+
+    plt.figure(figsize=(10,10))
+    plt.hist(im_med_10[np.where(im_mean_10>1)],255,alpha=0.3,label='10deg')
+    plt.hist(im_med_45[np.where(im_mean_45>1)],255,alpha=0.3,label='45deg')
+    plt.hist(im_med_80[np.where(im_mean_80>1)],255,alpha=0.3,label='80deg')
+    plt.legend()
+    plt.savefig(f'{out_fn}/hist_meds.png')
+
+    cv.imwrite(f'{out_fn}/mean_img_10.tif', im_mean_10.astype(np.uint8))
+    cv.imwrite(f'{out_fn}/mean_img_45.tif', im_mean_45.astype(np.uint8))
+    cv.imwrite(f'{out_fn}/mean_img_80.tif', im_mean_80.astype(np.uint8))
+
+    cv.imwrite(f'{out_fn}/med_img_10.tif', im_med_10.astype(np.uint8))
+    cv.imwrite(f'{out_fn}/med_img_45.tif', im_med_45.astype(np.uint8))
+    cv.imwrite(f'{out_fn}/med_img_80.tif', im_med_80.astype(np.uint8))
+
     # 348.6108179174165,344.57656629590826,352.6450695389247,
     # -72.927770764023,-79.93014228527048,-65.92539924277551,
 
