@@ -2,10 +2,8 @@
 # June 2024
 
 # Implements SIFT-based Feature Matching
-
 import cv2 as cv
 import numpy as np
-from scipy.interpolate import CubicSpline
 import warnings
 from skimage import exposure
 import logging
@@ -18,8 +16,8 @@ import logging
 detector_settings = {
     'nfeatures': 0,
     'nOctaveLayers': 4,
-    'contrastThreshold': 0.04,
-    'edgeThreshold': 10,
+    'contrastThreshold': 0.03,
+    'edgeThreshold': 15,
     'sigma': 1.6
 }
 
@@ -102,13 +100,13 @@ class FeatureMatcher:
         return kp1,des1,matches,H
     
     def match_image_to_image(self, im1, im2, M_in=np.eye(3), k=2, r=0.8):
-        kp2, des2 = self.detector.detectAndCompute(im2)
+        kp2, des2 = self.detector.detectAndCompute(im2, None)
         return self.match_image_to_kp(im1, kp2, im2.shape, des2, M_in=M_in, k=k, r=r)
 
 
-#################################################
-############### FEATURE MATCH ###################
-#################################################
+###################################################
+############### Iterative MATCH ###################
+###################################################
 
 
 def colortransfer(src, dst):
@@ -180,7 +178,9 @@ class IterativeMatcher:
         # Return the new homography, keypoints, descriptors, and matches
         return M_out, list(kp1), list(des1), list(new_matches)
 
-    def iterative_match(self, im1, im2, colormatch=True, cmatch_fns=None, n_iters=10):
+    def iterative_match(self, im1, im2, 
+                        colormatch=True, cmatch_fns=None,
+                        n_iters=10, H_init=np.eye(3)):
         '''
         Performs iterative matching between two images
         '''
@@ -200,8 +200,8 @@ class IterativeMatcher:
         self.shape2 = im2.shape
 
         # Initialize homography and keypoint match storage
-        H_cur = np.eye(3)
-        H_f = np.eye(3)
+        H_cur = H_init
+        H_f = H_init
         kp_f = []
         des_f = []
         matches_f = []
@@ -244,11 +244,24 @@ class IterativeMatcher:
 
         # Throw an error if there are no matches, otherwise return the detected matches.
         assert len(matches_f) > 0, "NO MATCHES FOUND"
+        ptsA = np.array([kp_f[k.queryIdx].pt for k in matches_f])
+        ptsB = np.array([self.kp2[k.trainIdx].pt for k in matches_f])
+        try:
+            H_f, mask = cv.findHomography(ptsA, ptsB, cv.RANSAC, 3)
+            if H_f is None:
+                logging.error(f"RANSAC FAILURE! Trying Least squares. N_MATCHES: {len(ptsA)}")
+                raise Exception()
+        except:
+            H_f, mask = cv.findHomography(ptsA, ptsB, 0)
         return H_f, kp_f, self.kp2, matches_f
     
-    def match_and_plot(self, outfns, im1, im2, colormatch=True, cmatch_fns=None, n_iters=10):
+    def match_and_plot(self, outfns, im1, im2, 
+                       colormatch=True, cmatch_fns=None, 
+                       n_iters=10, H_init=np.eye(3)):
         # Perform the iterative matching
-        (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, colormatch=colormatch, cmatch_fns=cmatch_fns, n_iters=n_iters)
+        (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, 
+                                                           colormatch=colormatch, cmatch_fns=cmatch_fns, 
+                                                           n_iters=n_iters, H_init=H_init)
         
         if colormatch:
             im1, im2 = colortransfer(im1,im2)

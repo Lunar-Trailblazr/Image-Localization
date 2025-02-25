@@ -56,7 +56,7 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
     sinu_mask = cv.dilate(sinu_mask, np.ones((5,5)), iterations=1)
     
 
-    def makeHSH(alt, az, clon, clat, zfactor=100000):
+    def makeHSH(alt, az, clon, clat, zfactor=1):
         hshfn = f'hillshade_{clon:03.0f}_{clat:03.0f}_{alt:03.0f}_{az:03.0f}_{zfactor}'
         reffile = f"{workdir}/topo_sinu.tif" #f"{workdir}/topo_ortho.tif" if clat < 45 else f"{workdir}/topo_stere.tif"
         gdal.DEMProcessing(
@@ -74,9 +74,10 @@ def get_hillshade(minlat, minlon, maxlat, maxlon, configs, outdir=None):
         return f"{outdir}/{hshfn}.tif"
     
     ofns = []
-    for zf in np.arange(1, 15, 1):
+    for zf in [1,2,0.5,3,0.33,4,0.25,5,0.2,6,0.16,10,0.1]:
         for (alt,az) in configs:
             ofns.append(makeHSH(alt, az, clon, clat, zfactor=zf))
+    # ofns.append(makeHSH(alt, az, clon, clat, zfactor=0.5))
     
     return ofns, sinu_mask
     # make_backplane(minlat, minlon, maxlat, maxlon, cv.imread(f'{workdir}/topo_sinu.tif', cv.IMREAD_ANYDEPTH))
@@ -106,7 +107,7 @@ if __name__ == "__main__":
     for k in ofns1:
         im = cv.imread(k, cv.IMREAD_ANYDEPTH)
         imgs10.append(im)
-        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1].split('.')[0], alpha=0.3)
+        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1][:-4], alpha=0.3)
     plt.legend()
     plt.savefig(f'{out_fn}/output_hist_10.png')
 
@@ -115,7 +116,7 @@ if __name__ == "__main__":
     for k in ofns2:
         im = cv.imread(k, cv.IMREAD_ANYDEPTH)
         imgs45.append(im)
-        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1].split('.')[0], alpha=0.3)
+        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1][:-4], alpha=0.3)
     plt.legend()
     plt.savefig(f'{out_fn}/output_hist_45.png')
 
@@ -124,7 +125,7 @@ if __name__ == "__main__":
     for k in ofns3:
         im = cv.imread(k, cv.IMREAD_ANYDEPTH)
         imgs80.append(im)
-        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1].split('.')[0], alpha=0.3)
+        plt.hist(im[np.where(im>1)], 255, label=k.split('_')[-1][:-4], alpha=0.3)
     plt.legend()
     plt.savefig(f'{out_fn}/output_hist_80.png')
 
