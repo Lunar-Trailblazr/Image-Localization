@@ -62,7 +62,8 @@ inlola = "Topography/LunarTopography_60mpx.tif"
 
 # Ground resolution of M3 in m/pix. Used to approximate the size of the
 # M3 image used in matching, guaranteeing a sufficiently large hillshade.
-m3resolution = 200
+M3_RES = 140
+HVM3_RES = 60
 
 # Define the bands used for averaging the M3 radiance data. This includes
 # the first band, excludes the last band. Averaging bands together increases
@@ -171,14 +172,15 @@ def checkFM(M3_OBJ, HSH_OBJ, workdir,
     # Read in the images
     RDN = cv.imread(inrdn_fm, cv.IMREAD_ANYDEPTH)
     HSH = cv.imread(inshd_fm, cv.IMREAD_ANYDEPTH)
-    T_GUESS = (np.array(HSH.shape)-np.array(RDN.shape)*200/60)/2
-    H_init = np.array([[200/60, 0.01,   T_GUESS[1]],
-                       [0.01,   200/60, T_GUESS[0]],
+
+    T_GUESS = (np.array(HSH.shape)-np.array(RDN.shape)*M3_RES/HVM3_RES)/2
+    H_init = np.array([[M3_RES/HVM3_RES, 0.01,   T_GUESS[1]],
+                       [0.01,   M3_RES/HVM3_RES, T_GUESS[0]],
                        [0,      0,      1]])
     success = False
     #Run image match, providing the filenames to write output to.
     try:
-        H_f, kp_f, kp2, matches_f, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', 
+        H_f, kp_f, kp2, matches_f, _, success = FM_OBJ.match_and_plot([f'{out_fm}_match.tif', 
                                                                     f'{out_fm}_match2.tif', 
                                                                     f'{workdir}/{m3id}/{m3id}_RDN_WARP.tif',
                                                                     f'{workdir}/{m3id}/{m3id}_RDN_KPS.tif',
@@ -207,6 +209,9 @@ def checkFM(M3_OBJ, HSH_OBJ, workdir,
     np.save(f'{workdir}/{m3id}/{m3id}_LAT.npy', lat_bp)
     plt.imsave(f'{workdir}/{m3id}/{m3id}_LAT.png', lat_bp)
     np.save(f'{workdir}/{m3id}/{m3id}_HOMOGRAPHY.npy', H_f)
+    pts = np.array([[kp_f[k.queryIdx].pt for k in matches_f],
+                    [kp2[k.trainIdx].pt for k in matches_f]])
+    np.save(f'{workdir}/{m3id}/{m3id}_MATCHES.npy', pts)
 
     if not (1<np.ptp(lon_bp)<10 and 1<np.ptp(lat_bp)<10):
         logging.error(f"{m3id} BACKPLANE ERROR! MATCH FAILED!")
@@ -251,7 +256,7 @@ def run_match(m3id):
     try:
         M3_OBJ = M3(m3id=m3id, 
                     m3dir=m3dir, 
-                    resolution=m3resolution)
+                    resolution=M3_RES)
         infodict['FILE_FOUND']  =   True
     except FileNotFoundError as e:
         # If there is a filenotfound error, then log that the M3
@@ -267,12 +272,14 @@ def run_match(m3id):
     
     # Set the bounding box for the hillshade region. To match the expectation
     # of HVM3, the box is set from the lat/lon center,
-    M3_OBJ.set_bounding_box_center(77000*UNCERTAINTY_SCALE, 135000*UNCERTAINTY_SCALE)
+    M3_OBJ.set_bounding_box_center(64400*UNCERTAINTY_SCALE, 112700*UNCERTAINTY_SCALE)
 
     # Get the radiance image from the M3 data, as an 8bit raster image. Set the
     # aspect ratio of the cropped raster to be as similar as possible to HVM3.
+    w_x = 22e3*M3_RES/HVM3_RES
+    w_y = 27e3*M3_RES/HVM3_RES
     rdn_image_fn = M3_OBJ.get_RDN_8bit_crop(bands=np.arange(*band_bnds),
-                                       w_x=60800, w_y=74600,
+                                       w_x=w_x, w_y=w_y,
                                        outdir=workdir,
                                        outfn=f'{M3_OBJ.m3id}_RDN_average_byte.tif',
                                        contrast_mode='rescale')

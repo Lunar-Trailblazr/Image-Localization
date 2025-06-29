@@ -253,13 +253,13 @@ class IterativeMatcher:
                 raise Exception()
         except:
             H_f, mask = cv.findHomography(ptsA, ptsB, 0)
-        return H_f, kp_f, self.kp2, matches_f
+        return H_f, kp_f, self.kp2, matches_f, mask
     
     def match_and_plot(self, outfns, im1, im2, 
                        colormatch=True, cmatch_fns=None, 
                        n_iters=10, H_init=np.eye(3)):
         # Perform the iterative matching
-        (H_f, kp_f, kp2, matches_f) = self.iterative_match(im1, im2, 
+        (H_f, kp_f, kp2, matches_f, mask) = self.iterative_match(im1, im2, 
                                                            colormatch=colormatch, cmatch_fns=cmatch_fns, 
                                                            n_iters=n_iters, H_init=H_init)
         
@@ -278,4 +278,4 @@ class IterativeMatcher:
         cv.imwrite(outfns[3], img5)
         cv.imwrite(outfns[4], img6)
 
-        return H_f, kp_f, kp2, matches_f, outfns
+        return H_f, kp_f, kp2, matches_f, mask, outfns

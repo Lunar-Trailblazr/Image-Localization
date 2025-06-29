@@ -186,8 +186,9 @@ class M3:
 
         pix = [min(w_y//self.resolution, orig.shape[0])//2,
                min(w_x//self.resolution, orig.shape[1])//2]
-        newimg = orig[center[0]-pix[0]:center[0]+pix[0],
-                      center[1]-pix[1]:center[1]+pix[1]]
+        # print(center[0]-pix[0], center[0]+pix[0], center[1]-pix[1], center[1]+pix[1])
+        newimg = orig[int(center[0]-pix[0]):int(center[0]+pix[0]),
+                      int(center[1]-pix[1]):int(center[1]+pix[1])]
         
         if contrast_mode == 'equalize':
             newimg = exposure.rescale_intensity(newimg, out_range=(0,1))
