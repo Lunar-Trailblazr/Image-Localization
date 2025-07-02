@@ -70,7 +70,7 @@ HVM3_RES = 60
 # quality of the image product used in matching.
 band_bnds=(71,82)  #(5,15)
 
-UNCERTAINTY_SCALE = 1# 2**0.5
+UNCERTAINTY_SCALE = 1 #2**0.5
 
 # Input directory for the radiance data.
 # The currently used data is clipped to 2677 rows. The implementation no longer
@@ -146,8 +146,8 @@ def get_backplanes(rdn_fn, hsh_fn, M3_OBJ, H):
     lonimg_hsh = lon_grid*mask#[np.where(mask==1)]
     latimg_hsh = lat_grid*mask#[np.where(mask==1)]
 
-    lon_backplane = cv.warpPerspective(lonimg_hsh, np.linalg.inv(H), rdn_im.shape[::-1])
-    lat_backplane = cv.warpPerspective(latimg_hsh, np.linalg.inv(H), rdn_im.shape[::-1])
+    lon_backplane = cv.warpPerspective(lonimg_hsh, np.linalg.pinv(H), rdn_im.shape[::-1])
+    lat_backplane = cv.warpPerspective(latimg_hsh, np.linalg.pinv(H), rdn_im.shape[::-1])
 
     return lon_backplane, lat_backplane
 
@@ -177,6 +177,7 @@ def checkFM(M3_OBJ, HSH_OBJ, workdir,
     H_init = np.array([[M3_RES/HVM3_RES, 0.01,   T_GUESS[1]],
                        [0.01,   M3_RES/HVM3_RES, T_GUESS[0]],
                        [0,      0,      1]])
+    # H_init = np.eye(3, dtype=np.float32)
     success = False
     #Run image match, providing the filenames to write output to.
     try:
@@ -213,8 +214,13 @@ def checkFM(M3_OBJ, HSH_OBJ, workdir,
                     [kp2[k.trainIdx].pt for k in matches_f]])
     np.save(f'{workdir}/{m3id}/{m3id}_MATCHES.npy', pts)
 
-    if not (1<np.ptp(lon_bp)<10 and 1<np.ptp(lat_bp)<10):
-        logging.error(f"{m3id} BACKPLANE ERROR! MATCH FAILED!")
+    img_area = np.radians(np.ptp(lon_bp)) * np.radians(np.ptp(lat_bp)) * (1737.4)**2
+    AREA_TARGET = 51.3*63
+    logging.info(f"{np.ptp(lon_bp)=}, {np.ptp(lat_bp)=}")
+    logging.info(f"{m3id} AREA: {img_area} TARGET: {AREA_TARGET} km^2")
+    # if not (1<np.ptp(lon_bp)<10 and 1<np.ptp(lat_bp)<10):
+    if not 0.5*AREA_TARGET < img_area < 5*AREA_TARGET:
+        logging.error(f"{m3id} BACKPLANE ERROR! MATCH FAILED BY AREA THRESHOLD! {img_area/AREA_TARGET}")
         return False, inshd_fm, None, len(matches_f)
     
 
@@ -331,6 +337,10 @@ def run_match(m3id):
         logging.info(f'Using zFactor {zf}')
         matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, HSH_OBJ, workdir,
                                                     inrdn_fm=rdn_image_fn, zfactor=zf)
+    if not matched:
+        logging.error(f"Z SCALING FAILED. TRYING Z FACTOR 0.5")
+        matched, hsh_fn, saved_fns, n_matches = checkFM(M3_OBJ, HSH_OBJ, workdir,
+                                                    inrdn_fm=rdn_image_fn, zfactor=0.5)
         
     infodict['INC_MATCH'] = infodict['INC']
     infodict['AZM_MATCH'] = infodict['AZM']
